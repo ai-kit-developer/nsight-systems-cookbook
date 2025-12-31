@@ -60,13 +60,13 @@ if not (USE_TORCH or USE_CUPY):
 
 def get_color(name):
     colors = {
-        "red": (1.0, 0.0, 0.0),
-        "green": (0.0, 1.0, 0.0),
-        "blue": (0.0, 0.0, 1.0),
-        "yellow": (1.0, 1.0, 0.0),
-        "orange": (1.0, 0.5, 0.0),
+        "red": "red",
+        "green": "green",
+        "blue": "blue",
+        "yellow": "yellow",
+        "orange": "orange",
     }
-    return colors.get(name, (0.5, 0.5, 0.5))
+    return colors.get(name, "gray")
 
 def bad_practice_strided_access(size=1000):
     """

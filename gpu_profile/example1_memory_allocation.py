@@ -57,15 +57,16 @@ if not (USE_TORCH or USE_CUPY):
     print("⚠ 警告：没有可用的 GPU 库，将使用 CPU 模拟（性能分析可能不准确）")
 
 def get_color(name):
-    """颜色辅助函数"""
+    """颜色辅助函数 - 使用字符串颜色以避免matplotlib依赖"""
+    # 使用字符串颜色名称，不需要matplotlib
     colors = {
-        "red": (1.0, 0.0, 0.0),
-        "green": (0.0, 1.0, 0.0),
-        "blue": (0.0, 0.0, 1.0),
-        "yellow": (1.0, 1.0, 0.0),
-        "orange": (1.0, 0.5, 0.0),
+        "red": "red",
+        "green": "green",
+        "blue": "blue",
+        "yellow": "yellow",
+        "orange": "orange",
     }
-    return colors.get(name, (0.5, 0.5, 0.5))
+    return colors.get(name, "gray")
 
 def bad_practice_frequent_allocation(size=1024, iterations=100):
     """

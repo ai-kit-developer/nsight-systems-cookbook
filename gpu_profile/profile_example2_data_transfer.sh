@@ -25,11 +25,11 @@ if [ ! -f "$SCRIPT_NAME" ]; then
 fi
 
 echo "执行命令:"
-echo "  nsys profile --trace=cuda,nvtx --force-overwrite=true --output=$OUTPUT_FILE python3 $SCRIPT_NAME"
+echo "  nsys profile --trace=cuda,nvtx --cuda-memory-usage=true --force-overwrite=true --output=$OUTPUT_FILE python3 $SCRIPT_NAME"
 echo ""
 
 # 执行profile
-nsys profile --trace=cuda,nvtx --force-overwrite=true --output="$OUTPUT_FILE" python3 "$SCRIPT_NAME" || true
+nsys profile --trace=cuda,nvtx --cuda-memory-usage=true --force-overwrite=true --output="$OUTPUT_FILE" python3 "$SCRIPT_NAME" || true
 
 echo ""
 if [ -f "$OUTPUT_FILE" ]; then
