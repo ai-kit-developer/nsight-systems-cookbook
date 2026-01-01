@@ -121,33 +121,66 @@ all: $(SUBDIRS)
 6_cutlass_study:
 	@echo "Building 6_cutlass_study..."
 	@echo "Note: This requires CUTLASS library. Please set CUTLASS_PATH if needed."
+	@echo "      If CUTLASS is not available, build will fail gracefully (this is expected)."
 	@mkdir -p 6_cutlass_study/bin
-	@CUTLASS_PATH_USE=$${CUTLASS_PATH:-/home/hongkailin/cutlass/include/}; \
-	CUTLASS_UTIL_PATH_USE=$${CUTLASS_UTIL_PATH:-/home/hongkailin/cutlass/tools/util/include}; \
+	@CUTLASS_PATH_USE=""; \
+	CUTLASS_UTIL_PATH_USE=""; \
+	if [ -n "$$CUTLASS_PATH" ] && [ -d "$$CUTLASS_PATH" ]; then \
+		CUTLASS_PATH_USE="$$CUTLASS_PATH"; \
+		if [ -n "$$CUTLASS_UTIL_PATH" ] && [ -d "$$CUTLASS_UTIL_PATH" ]; then \
+			CUTLASS_UTIL_PATH_USE="$$CUTLASS_UTIL_PATH"; \
+		else \
+			CUTLASS_BASE_DIR=$$(dirname $$(dirname "$$CUTLASS_PATH")); \
+			if [ -d "$$CUTLASS_BASE_DIR/tools/util/include" ]; then \
+				CUTLASS_UTIL_PATH_USE="$$CUTLASS_BASE_DIR/tools/util/include"; \
+			fi; \
+		fi; \
+	else \
+		for CUTLASS_BASE in "/data/cutlass" "$$HOME/cutlass" "/usr/local/cutlass" "/opt/cutlass" "$$HOME/workspace/cutlass" "$$HOME/projects/cutlass"; do \
+			if [ -d "$$CUTLASS_BASE/include" ] && [ -d "$$CUTLASS_BASE/tools/util/include" ]; then \
+				CUTLASS_PATH_USE="$$CUTLASS_BASE/include"; \
+				CUTLASS_UTIL_PATH_USE="$$CUTLASS_BASE/tools/util/include"; \
+				break; \
+			fi; \
+		done; \
+	fi; \
 	echo "Using CUTLASS_PATH=$$CUTLASS_PATH_USE"; \
 	echo "Using CUTLASS_UTIL_PATH=$$CUTLASS_UTIL_PATH_USE"; \
-	$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr \
-		-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
-		-o 6_cutlass_study/bin/v1_print_half \
-		6_cutlass_study/v1_print_half.cu $(LDFLAGS) || \
-		echo "Failed to build v1_print_half (CUTLASS may not be available)"; \
-	$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr \
-		-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
-		-o 6_cutlass_study/bin/v2_gemm_kernel \
-		6_cutlass_study/v2_gemm_kernel.cu $(LDFLAGS) || \
-		echo "Failed to build v2_gemm_kernel (CUTLASS may not be available)"; \
-	$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr -O0 \
-		-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
-		-o 6_cutlass_study/bin/v3_turing_tensorop_gemm \
-		6_cutlass_study/v3_turing_tensorop_gemm.cu $(LDFLAGS) || \
-		echo "Failed to build v3_turing_tensorop_gemm (CUTLASS may not be available)"
+	if [ -z "$$CUTLASS_PATH_USE" ] || [ ! -d "$$CUTLASS_PATH_USE" ]; then \
+		echo "Warning: CUTLASS_PATH does not exist. Skipping CUTLASS builds."; \
+		echo "         To build CUTLASS examples, please:"; \
+		echo "         1. Clone CUTLASS: git clone https://github.com/NVIDIA/cutlass.git"; \
+		echo "         2. Set CUTLASS_PATH environment variable: export CUTLASS_PATH=/path/to/cutlass/include/"; \
+		echo "         3. Set CUTLASS_UTIL_PATH: export CUTLASS_UTIL_PATH=/path/to/cutlass/tools/util/include/"; \
+		echo "         Or install CUTLASS in one of these locations:"; \
+		echo "         - /data/cutlass"; \
+		echo "         - $$HOME/cutlass"; \
+		echo "         - /usr/local/cutlass"; \
+		echo "         - /opt/cutlass"; \
+	else \
+		$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr \
+			-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
+			-o 6_cutlass_study/bin/v1_print_half \
+			6_cutlass_study/v1_print_half.cu $(LDFLAGS) || \
+			echo "Failed to build v1_print_half (CUTLASS may not be available)"; \
+		$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr \
+			-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
+			-o 6_cutlass_study/bin/v2_gemm_kernel \
+			6_cutlass_study/v2_gemm_kernel.cu $(LDFLAGS) || \
+			echo "Failed to build v2_gemm_kernel (CUTLASS may not be available)"; \
+		$(NVCC) $(NVCC_FLAGS) --expt-relaxed-constexpr -O0 \
+			-I$$CUTLASS_PATH_USE -I$$CUTLASS_UTIL_PATH_USE \
+			-o 6_cutlass_study/bin/v3_turing_tensorop_gemm \
+			6_cutlass_study/v3_turing_tensorop_gemm.cu $(LDFLAGS) || \
+			echo "Failed to build v3_turing_tensorop_gemm (CUTLASS may not be available)"; \
+	fi
 
 flash_attention:
 	@echo "Building flash_attention..."
-	@echo "Note: This requires PyTorch. Using CMake is recommended for this project."
-	@mkdir -p flash_attention/bin
-	@echo "Flash attention requires PyTorch and should be built with CMake."
-	@echo "Please use: cd flash_attention && cmake . && make"
+	@echo "Note: This requires PyTorch. Makefile will attempt to find libtorch automatically."
+	@echo "      For best results, set TORCH_PATH environment variable or use CMake."
+	@cd flash_attention && $(MAKE) -f Makefile all || \
+		(echo "Makefile build failed. Try using CMake: cd flash_attention && cmake . && make")
 
 # Clean all build artifacts
 clean:
@@ -177,7 +210,7 @@ clean-6_cutlass_study:
 	@rm -rf 6_cutlass_study/bin
 
 clean-flash_attention:
-	@rm -rf flash_attention/bin
+	@cd flash_attention && $(MAKE) -f Makefile clean || rm -rf flash_attention/bin
 
 # Help target
 help:

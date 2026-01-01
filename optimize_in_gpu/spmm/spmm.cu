@@ -6,7 +6,9 @@
 #include <cuda_runtime_api.h> 
 #include <cuda_runtime.h>
 #include <cusparse.h> 
+#ifdef SPUTNIK_AVAILABLE
 #include "sputnik/sputnik.h"
+#endif
 
 using namespace std;
 
@@ -37,10 +39,10 @@ using namespace std;
     }                                                                          \
 }
 
-void ReadFile(std::string &file, int &row_num, int &col_num, int &nnz_num,
-            std::vector<int> &A_row_offset, std::vector<int> &A_col_index,
-            std::vector<float> &A_value, std::vector<float> &B,
-            std::vector<float> &C)
+void read_file(std::string &file, int &num_rows, int &num_cols, int &num_nnz,
+            std::vector<int> &row_offset, std::vector<int> &col_index,
+            std::vector<float> &value, std::vector<float> &matrix_b,
+            std::vector<float> &matrix_c)
 {
     std::ifstream input;
     input.open("matrix/" + file + ".smtx");
@@ -48,39 +50,39 @@ void ReadFile(std::string &file, int &row_num, int &col_num, int &nnz_num,
     while (input.peek() == '%')
         input.ignore(2048, '\n');
     
-    std::string s;
-    getline(input, s);
+    std::string line_str;
+    getline(input, line_str);
     // parse the first line
-    std::stringstream s_stream(s);
+    std::stringstream s_stream(line_str);
     std::string current_str;
     getline(s_stream, current_str, ',');
-    row_num = atoi(current_str.c_str());
+    num_rows = atoi(current_str.c_str());
     getline(s_stream, current_str, ',');
-    col_num = atoi(current_str.c_str());
+    num_cols = atoi(current_str.c_str());
     getline(s_stream, current_str, ',');
-    nnz_num = atoi(current_str.c_str());
+    num_nnz = atoi(current_str.c_str());
 
-    A_row_offset.resize(row_num+1);
-    A_col_index.resize(nnz_num);
-    A_value.resize(nnz_num);
-    for(int i=0; i<row_num+1; i++){
-        input >> A_row_offset[i];
+    row_offset.resize(num_rows + 1);
+    col_index.resize(num_nnz);
+    value.resize(num_nnz);
+    for(int element_idx = 0; element_idx < num_rows + 1; element_idx++){
+        input >> row_offset[element_idx];
     }
-    for(int i=0; i<nnz_num; i++){
-        input >> A_col_index[i];
+    for(int element_idx = 0; element_idx < num_nnz; element_idx++){
+        input >> col_index[element_idx];
     }
     input.close();
-    B.resize(col_num * row_num);
-    C.resize(row_num * row_num);
+    matrix_b.resize(num_cols * num_rows);
+    matrix_c.resize(num_rows * num_rows);
 
     // init A
-    for(int i=0; i<A_value.size(); i++){
-        A_value[i]=i%17;
+    for(int element_idx = 0; element_idx < value.size(); element_idx++){
+        value[element_idx] = element_idx % 17;
     }
 
     // init B
-    for(int i=0; i<B.size(); i++){
-        B[i]=i%13;
+    for(int element_idx = 0; element_idx < matrix_b.size(); element_idx++){
+        matrix_b[element_idx] = element_idx % 13;
     }
 }
 
@@ -96,21 +98,21 @@ template <typename IndexType, typename ValueType>
 void spmm_cpu_kernel(std::vector<IndexType> &row_offset,
                 std::vector<IndexType> &col_index,
                 std::vector<ValueType> &value,
-                std::vector<ValueType> &B,
-                std::vector<ValueType> &C,
-                IndexType row_num,
-                IndexType col_num)
+                std::vector<ValueType> &matrix_b,
+                std::vector<ValueType> &matrix_c,
+                IndexType num_rows,
+                IndexType num_cols)
 {
-    for(int i=0; i<row_num; i++){
-        for(int j=0; j<row_num; j++){
-            ValueType res = 0;
-            IndexType num = row_offset[i+1] - row_offset[i];
-            for(int k=0; k<num; k++){
-                IndexType index = row_offset[i] + k;
-                IndexType current_col = col_index[index];
-                res += value[index]* B[current_col*row_num + j];
+    for(int row_idx = 0; row_idx < num_rows; row_idx++){
+        for(int col_idx = 0; col_idx < num_rows; col_idx++){
+            ValueType partial_sum = 0;
+            IndexType num_nnz = row_offset[row_idx + 1] - row_offset[row_idx];
+            for(int nnz_idx = 0; nnz_idx < num_nnz; nnz_idx++){
+                IndexType nnz_index = row_offset[row_idx] + nnz_idx;
+                IndexType current_col = col_index[nnz_index];
+                partial_sum += value[nnz_index] * matrix_b[current_col * num_rows + col_idx];
             }
-            C[i*row_num+j] = res;
+            matrix_c[row_idx * num_rows + col_idx] = partial_sum;
         }
     }
 }
@@ -142,39 +144,39 @@ __global__ void My_spmm_csr_vector_kernel_v0(const int num_rows,        // 矩�
     const int ldb,                         // 矩阵 B 的行宽（leading dimension）
     const int ldc){                        // 矩阵 C 的行宽（leading dimension）
     // 线程块索引
-    int bx = blockIdx.x;  // x 方向的线程块索引
-    int by = blockIdx.y;  // y 方向的线程块索引
+    int block_idx_x = blockIdx.x;  // x 方向的线程块索引
+    int block_idx_y = blockIdx.y;  // y 方向的线程块索引
 
     // 线程在块内的索引
-    int tx = threadIdx.x;
+    int thread_idx_x = threadIdx.x;
 
     // 计算当前线程处理的输出矩阵 C 的元素位置
-    int C_row_index = by;  // C 的行索引
-    int C_col_index = bx * THREAD_NUM_PER_BLOCK + tx;  // C 的列索引
+    int c_row_idx = block_idx_y;  // C 的行索引
+    int c_col_idx = block_idx_x * THREAD_NUM_PER_BLOCK + thread_idx_x;  // C 的列索引
 
     // 边界检查：确保索引在有效范围内
-    if(C_row_index < num_rows && C_col_index < ldc){
+    if(c_row_idx < num_rows && c_col_idx < ldc){
         // 获取矩阵 A 当前行的非零元素范围
-        int row_start = A_row_offset[C_row_index];      // 当前行第一个非零元素的索引
-        int row_end = A_row_offset[C_row_index + 1];   // 下一行第一个非零元素的索引
-        int iter_num = row_end - row_start;            // 当前行的非零元素数量
+        int row_start = A_row_offset[c_row_idx];      // 当前行第一个非零元素的索引
+        int row_end = A_row_offset[c_row_idx + 1];   // 下一行第一个非零元素的索引
+        int num_nnz = row_end - row_start;            // 当前行的非零元素数量
         
         // 初始化累加器
-        float sum = 0.0;
+        float partial_sum = 0.0;
         
         // 遍历当前行的所有非零元素
-        for(int i=0; i<iter_num; i++){
-            int index = row_start + i;                    // 非零元素在 CSR 数组中的索引
-            int current_col = A_col_index[index];         // 非零元素在 A 中的列索引
-            float current_val = A_value[index];           // 非零元素的值
-            // 从矩阵 B 中加载对应元素：B[current_col][C_col_index]
-            float reg_B = B[ current_col * ldb + C_col_index];
-            // 累加：A[C_row_index][current_col] * B[current_col][C_col_index]
-            sum += current_val * reg_B;
+        for(int nnz_idx = 0; nnz_idx < num_nnz; nnz_idx++){
+            int nnz_index = row_start + nnz_idx;                    // 非零元素在 CSR 数组中的索引
+            int current_col = A_col_index[nnz_index];         // 非零元素在 A 中的列索引
+            float current_val = A_value[nnz_index];           // 非零元素的值
+            // 从矩阵 B 中加载对应元素：B[current_col][c_col_idx]
+            float reg_b = B[current_col * ldb + c_col_idx];
+            // 累加：A[c_row_idx][current_col] * B[current_col][c_col_idx]
+            partial_sum += current_val * reg_b;
         }
 
         // 将结果写入输出矩阵 C
-        C[C_row_index * ldc + C_col_index] = sum;
+        C[c_row_idx * ldc + c_col_idx] = partial_sum;
     }
 }
 
@@ -196,55 +198,55 @@ __global__ void My_spmm_csr_vector_kernel_v1(const int num_rows,
     const int N,
     const int K){
     // Block index
-    int bx = blockIdx.x;
-    int by = blockIdx.y;
+    int block_idx_x = blockIdx.x;
+    int block_idx_y = blockIdx.y;
 
     // Thread index
-    int tx = threadIdx.x;
+    int thread_idx_x = threadIdx.x;
 
     // matrix C row_index
-    int C_row_index = by;
-    int C_col_index = bx * THREAD_NUM_PER_BLOCK + tx;
+    int c_row_idx = block_idx_y;
+    int c_col_idx = block_idx_x * THREAD_NUM_PER_BLOCK + thread_idx_x;
 
     // shared mem for A 
-    __shared__ int As_col[BLOCK_SIZE_K];
-    __shared__ float As_value[BLOCK_SIZE_K];
+    __shared__ int shared_col[BLOCK_SIZE_K];
+    __shared__ float shared_value[BLOCK_SIZE_K];
 
-    int NUM_A_PER_THREAD = BLOCK_SIZE_K/THREAD_NUM_PER_BLOCK;
+    int num_a_per_thread = BLOCK_SIZE_K / THREAD_NUM_PER_BLOCK;
 
-    if(C_row_index < num_rows && C_col_index < N){
-        int row_start = A_row_offset[C_row_index];
-        int row_end = A_row_offset[C_row_index + 1];
-        int iter_num = row_end - row_start;
-        float sum = 0.0;
+    if(c_row_idx < num_rows && c_col_idx < N){
+        int row_start = A_row_offset[c_row_idx];
+        int row_end = A_row_offset[c_row_idx + 1];
+        int num_nnz = row_end - row_start;
+        float partial_sum = 0.0;
 
-        for(int k=0; k<iter_num; k+=BLOCK_SIZE_K){
+        for(int k_offset = 0; k_offset < num_nnz; k_offset += BLOCK_SIZE_K){
             // store A to shared mem
-            int global_index = row_start + k*BLOCK_SIZE_K;
-            int local_index = NUM_A_PER_THREAD * tx;
-            for(int i=0; i< NUM_A_PER_THREAD; i++){
-                if(global_index + local_index + i < row_end){
-                    As_col[local_index + i] = A_col_index[global_index + local_index +i];
-                    As_value[local_index + i] = A_value[global_index + local_index +i];
+            int global_index = row_start + k_offset * BLOCK_SIZE_K;
+            int local_index = num_a_per_thread * thread_idx_x;
+            for(int element_idx = 0; element_idx < num_a_per_thread; element_idx++){
+                if(global_index + local_index + element_idx < row_end){
+                    shared_col[local_index + element_idx] = A_col_index[global_index + local_index + element_idx];
+                    shared_value[local_index + element_idx] = A_value[global_index + local_index + element_idx];
                 }
                 else{
-                    As_col[local_index + i] = -1;
-                    As_value[local_index + i] = 0.0;
+                    shared_col[local_index + element_idx] = -1;
+                    shared_value[local_index + element_idx] = 0.0;
                 }
             }
             __syncthreads();
             // load A from shared mem
-            for(int i=0; i< BLOCK_SIZE_K; i++){
-                int current_col = As_col[i];
-                float current_val = As_value[i];
+            for(int element_idx = 0; element_idx < BLOCK_SIZE_K; element_idx++){
+                int current_col = shared_col[element_idx];
+                float current_val = shared_value[element_idx];
                 if(current_col != -1){
-                    float reg_B = B[ current_col * N + C_col_index];
-                    sum += current_val * reg_B;
+                    float reg_b = B[current_col * N + c_col_idx];
+                    partial_sum += current_val * reg_b;
                 }
             }
         }
 
-        C[C_row_index * N + C_col_index] = sum;
+        C[c_row_idx * N + c_col_idx] = partial_sum;
     }
 }
 
@@ -268,23 +270,23 @@ int main(int argc, char **argv)
     }
 
     // load csr data from .smtx file
-    int row_num = 0;
-    int col_num = 0;
-    int nnz_num = 0;
-    std::vector<int> A_row_offset;
-    std::vector<int> A_col_index;
-    std::vector<float> A_value;
-    std::vector<float> B;
-    std::vector<float> C;
-    ReadFile(file, row_num, col_num, nnz_num, A_row_offset, A_col_index, A_value, B, C);
-    std::vector<float> C_cusparse(C.size());
+    int num_rows = 0;
+    int num_cols = 0;
+    int num_nnz = 0;
+    std::vector<int> row_offset;
+    std::vector<int> col_index;
+    std::vector<float> value;
+    std::vector<float> matrix_b;
+    std::vector<float> matrix_c;
+    read_file(file, num_rows, num_cols, num_nnz, row_offset, col_index, value, matrix_b, matrix_c);
+    std::vector<float> matrix_c_cusparse(matrix_c.size());
 
     // used in sputnik
     // TODO: it's useless?
-    std::vector<int> row_indices(row_num);
+    std::vector<int> row_indices(num_rows);
     // init row_indices
-    for(int i=0; i<row_num; i++){
-        row_indices[i] = A_row_offset[i+1] - A_row_offset[i];
+    for(int row_idx = 0; row_idx < num_rows; row_idx++){
+        row_indices[row_idx] = row_offset[row_idx + 1] - row_offset[row_idx];
     }
 
     //debug case
@@ -309,85 +311,90 @@ int main(int argc, char **argv)
     */
 
     // check input
-    std::cout<<"The row_num is:" <<row_num <<std::endl;
-    std::cout<<"The col_num is:" <<col_num <<std::endl;
-    std::cout<<"The nnz_num is:" <<nnz_num <<std::endl;
+    std::cout<<"The num_rows is:" <<num_rows <<std::endl;
+    std::cout<<"The num_cols is:" <<num_cols <<std::endl;
+    std::cout<<"The num_nnz is:" <<num_nnz <<std::endl;
 
     // allocate memory in GPU device
-    int* d_A_row_offset;
-    int* d_A_col_index;
-    float* d_A_value;
-    float* d_B;
-    float* d_C;
-    float* d_C_cusparse;
-    int* d_row_indices;
-    int B_num = B.size();
-    int C_num = C.size();
+    int* device_row_offset;
+    int* device_col_index;
+    float* device_value;
+    float* device_matrix_b;
+    float* device_matrix_c;
+    float* device_matrix_c_cusparse;
+    int* device_row_indices;
+    int matrix_b_size = matrix_b.size();
+    int matrix_c_size = matrix_c.size();
 
-    checkCudaErrors(cudaMalloc(&d_A_row_offset, (row_num + 1)*sizeof(int)));
-    checkCudaErrors(cudaMalloc(&d_A_col_index, nnz_num*sizeof(int)));
-    checkCudaErrors(cudaMalloc(&d_A_value, nnz_num*sizeof(float)));
-    checkCudaErrors(cudaMalloc(&d_B, B_num*sizeof(float)));
-    checkCudaErrors(cudaMalloc(&d_C, C_num*sizeof(float)));
-    checkCudaErrors(cudaMalloc(&d_C_cusparse, C_num*sizeof(float)));
-    checkCudaErrors(cudaMalloc(&d_row_indices, row_num*sizeof(int)));
-    checkCudaErrors(cudaMemcpy( d_A_row_offset, A_row_offset.data(), (row_num + 1)*sizeof(int), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy( d_A_col_index, A_col_index.data(), nnz_num*sizeof(int), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy( d_A_value, A_value.data(), nnz_num*sizeof(float), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy( d_B, B.data(), B_num*sizeof(float), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaMemcpy( d_row_indices, row_indices.data(), row_num*sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMalloc(&device_row_offset, (num_rows + 1) * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&device_col_index, num_nnz * sizeof(int)));
+    checkCudaErrors(cudaMalloc(&device_value, num_nnz * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&device_matrix_b, matrix_b_size * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&device_matrix_c, matrix_c_size * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&device_matrix_c_cusparse, matrix_c_size * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&device_row_indices, num_rows * sizeof(int)));
+    checkCudaErrors(cudaMemcpy(device_row_offset, row_offset.data(), (num_rows + 1) * sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(device_col_index, col_index.data(), num_nnz * sizeof(int), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(device_value, value.data(), num_nnz * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(device_matrix_b, matrix_b.data(), matrix_b_size * sizeof(float), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(device_row_indices, row_indices.data(), num_rows * sizeof(int), cudaMemcpyHostToDevice));
     
-    int iter = 2000;
+    int num_iterations = 2000;
     // My spmm
     // cpu version
-    // spmm_cpu_kernel<int,float>(A_row_offset, A_col_index, A_value, B, C, row_num, col_num);
+    // spmm_cpu_kernel<int,float>(row_offset, col_index, value, matrix_b, matrix_c, num_rows, num_cols);
 
     constexpr unsigned int THREAD_NUM_PER_BLOCK  = 128;
     
-    dim3 dimBlock(THREAD_NUM_PER_BLOCK);
-    dim3 dimGrid(row_num/THREAD_NUM_PER_BLOCK, row_num);
+    dim3 block_dim(THREAD_NUM_PER_BLOCK);
+    dim3 grid_dim(num_rows / THREAD_NUM_PER_BLOCK, num_rows);
 
-    for(int i=0; i<iter; i++){
-        My_spmm_csr_vector_kernel<128, 512, THREAD_NUM_PER_BLOCK> <<< dimGrid, dimBlock >>> 
-            (row_num, d_A_row_offset, d_A_col_index, d_A_value, d_B, d_C, row_num, row_num, col_num);
+    for(int iteration_idx = 0; iteration_idx < num_iterations; iteration_idx++){
+        My_spmm_csr_vector_kernel_v1<128, 512, THREAD_NUM_PER_BLOCK> <<< grid_dim, block_dim >>> 
+            (num_rows, device_row_offset, device_col_index, device_value, device_matrix_b, device_matrix_c, num_rows, num_rows, num_cols);
     }
-    //checkCudaErrors(cudaMemcpy(C.data(), d_C, C_num*sizeof(float), cudaMemcpyDeviceToHost));
+    //checkCudaErrors(cudaMemcpy(matrix_c.data(), device_matrix_c, matrix_c_size*sizeof(float), cudaMemcpyDeviceToHost));
 
-    // sputnik
-    cudaStream_t s0 = 0;
-    for(int i=0; i<iter; i++){
-        sputnik::CudaSpmm(row_num, row_num, col_num, 
-                            nnz_num, d_row_indices, 
-                            d_A_value, d_A_row_offset, d_A_col_index, 
-                            d_B, d_C, s0);
+    // sputnik (optional, requires sputnik library)
+    #ifdef SPUTNIK_AVAILABLE
+    cudaStream_t stream = 0;
+    for(int iteration_idx = 0; iteration_idx < num_iterations; iteration_idx++){
+        sputnik::CudaSpmm(num_rows, num_rows, num_cols, 
+                            num_nnz, device_row_indices, 
+                            device_value, device_row_offset, device_col_index, 
+                            device_matrix_b, device_matrix_c, stream);
     }
-    cudaStreamSynchronize(s0);
-    checkCudaErrors(cudaMemcpy(C.data(), d_C, C_num * sizeof(float), cudaMemcpyDeviceToHost));
+    cudaStreamSynchronize(stream);
+    checkCudaErrors(cudaMemcpy(matrix_c.data(), device_matrix_c, matrix_c_size * sizeof(float), cudaMemcpyDeviceToHost));
+    #else
+    // Skip sputnik test if library is not available
+    std::cout << "Note: Sputnik library not available, skipping sputnik test." << std::endl;
+    #endif
     
 
     // cusparse spmm
     //--------------------------------------------------------------------------
     // CUSPARSE APIs
-    int ldb = row_num;
-    int ldc = row_num;
+    int ldb = num_rows;
+    int ldc = num_rows;
     float alpha           = 1.0f;
     float beta            = 0.0f;
     cusparseHandle_t     handle = NULL;
     cusparseSpMatDescr_t matA;
     cusparseDnMatDescr_t matB, matC;
-    void*                dBuffer    = NULL;
-    size_t               bufferSize = 0;
+    void*                device_buffer    = NULL;
+    size_t               buffer_size = 0;
     CHECK_CUSPARSE( cusparseCreate(&handle) )
     // Create sparse matrix A in CSR format
-    CHECK_CUSPARSE( cusparseCreateCsr(&matA, row_num, col_num, nnz_num,
-                                      d_A_row_offset, d_A_col_index, d_A_value,
+    CHECK_CUSPARSE( cusparseCreateCsr(&matA, num_rows, num_cols, num_nnz,
+                                      device_row_offset, device_col_index, device_value,
                                       CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                                       CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F) )
     // Create dense matrix B
-    CHECK_CUSPARSE( cusparseCreateDnMat(&matB, col_num, row_num, ldb, d_B,
+    CHECK_CUSPARSE( cusparseCreateDnMat(&matB, num_cols, num_rows, ldb, device_matrix_b,
                                         CUDA_R_32F, CUSPARSE_ORDER_ROW) )
     // Create dense matrix C
-    CHECK_CUSPARSE( cusparseCreateDnMat(&matC, row_num, row_num, ldc, d_C_cusparse,
+    CHECK_CUSPARSE( cusparseCreateDnMat(&matC, num_rows, num_rows, ldc, device_matrix_c_cusparse,
                                         CUDA_R_32F, CUSPARSE_ORDER_ROW) )
     // allocate an external buffer if needed
     CHECK_CUSPARSE( cusparseSpMM_bufferSize(
@@ -395,16 +402,16 @@ int main(int argc, char **argv)
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  CUSPARSE_OPERATION_NON_TRANSPOSE,
                                  &alpha, matA, matB, &beta, matC, CUDA_R_32F,
-                                 CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) )
-    CHECK_CUDA( cudaMalloc(&dBuffer, bufferSize) )
+                                 CUSPARSE_SPMM_ALG_DEFAULT, &buffer_size) )
+    CHECK_CUDA( cudaMalloc(&device_buffer, buffer_size) )
 
     // execute SpMM
-    for(int i=0; i<iter; i++){
+    for(int iteration_idx = 0; iteration_idx < num_iterations; iteration_idx++){
         CHECK_CUSPARSE( cusparseSpMM(handle,
                 CUSPARSE_OPERATION_NON_TRANSPOSE,
                 CUSPARSE_OPERATION_NON_TRANSPOSE,
                 &alpha, matA, matB, &beta, matC, CUDA_R_32F,
-                CUSPARSE_SPMM_ALG_DEFAULT, dBuffer) )
+                CUSPARSE_SPMM_ALG_DEFAULT, device_buffer) )
     }
     
     // destroy matrix/vector descriptors
@@ -414,14 +421,14 @@ int main(int argc, char **argv)
     CHECK_CUSPARSE( cusparseDestroy(handle) )
     //--------------------------------------------------------------------------
     // device result check
-    CHECK_CUDA( cudaMemcpy(C_cusparse.data(), d_C_cusparse, C_num * sizeof(float),
+    CHECK_CUDA( cudaMemcpy(matrix_c_cusparse.data(), device_matrix_c_cusparse, matrix_c_size * sizeof(float),
                            cudaMemcpyDeviceToHost) )
 
     bool check_result = true;
-    for(int i=0; i<C.size(); i++){
-        if(fabs(C[i]-C_cusparse[i])>1e-6){
+    for(int element_idx = 0; element_idx < matrix_c.size(); element_idx++){
+        if(fabs(matrix_c[element_idx] - matrix_c_cusparse[element_idx]) > 1e-6){
             std::cout<<"The result is error!"<<std::endl;
-            printf("The error case is (%d %d %f %f)\n", i/row_num, i%row_num, C[i], C_cusparse[i]);
+            printf("The error case is (%d %d %f %f)\n", element_idx / num_rows, element_idx % num_rows, matrix_c[element_idx], matrix_c_cusparse[element_idx]);
             check_result = false;
             break;
         }
@@ -431,12 +438,12 @@ int main(int argc, char **argv)
     }
 
     // Free Memory
-    cudaFree(d_A_row_offset);
-    cudaFree(d_A_col_index);
-    cudaFree(d_A_value);
-    cudaFree(d_B);
-    cudaFree(d_C);
-    cudaFree(d_C_cusparse);
+    cudaFree(device_row_offset);
+    cudaFree(device_col_index);
+    cudaFree(device_value);
+    cudaFree(device_matrix_b);
+    cudaFree(device_matrix_c);
+    cudaFree(device_matrix_c_cusparse);
 
     return 0;
 }

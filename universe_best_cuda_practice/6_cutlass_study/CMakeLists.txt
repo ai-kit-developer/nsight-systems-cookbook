@@ -1,5 +1,41 @@
-set(CUTLASS_PATH "/home/hongkailin/cutlass/include/")
-set(CUTLASS_UTIL_PATH "/home/hongkailin/cutlass/tools/util/include")
+# Try to find CUTLASS from environment variable or common locations
+if(DEFINED ENV{CUTLASS_PATH} AND EXISTS "$ENV{CUTLASS_PATH}")
+    set(CUTLASS_PATH "$ENV{CUTLASS_PATH}")
+    if(DEFINED ENV{CUTLASS_UTIL_PATH} AND EXISTS "$ENV{CUTLASS_UTIL_PATH}")
+        set(CUTLASS_UTIL_PATH "$ENV{CUTLASS_UTIL_PATH}")
+    else()
+        # Try to infer util path from CUTLASS_PATH
+        get_filename_component(CUTLASS_BASE_DIR "$ENV{CUTLASS_PATH}" DIRECTORY)
+        get_filename_component(CUTLASS_BASE_DIR "${CUTLASS_BASE_DIR}" DIRECTORY)
+        if(EXISTS "${CUTLASS_BASE_DIR}/tools/util/include")
+            set(CUTLASS_UTIL_PATH "${CUTLASS_BASE_DIR}/tools/util/include")
+        endif()
+    endif()
+else()
+    # Try common installation locations
+    set(CUTLASS_SEARCH_PATHS
+        "/data/cutlass"
+        "$ENV{HOME}/cutlass"
+        "/usr/local/cutlass"
+        "/opt/cutlass"
+        "$ENV{HOME}/workspace/cutlass"
+        "$ENV{HOME}/projects/cutlass"
+    )
+    
+    foreach(CUTLASS_BASE ${CUTLASS_SEARCH_PATHS})
+        if(EXISTS "${CUTLASS_BASE}/include" AND EXISTS "${CUTLASS_BASE}/tools/util/include")
+            set(CUTLASS_PATH "${CUTLASS_BASE}/include")
+            set(CUTLASS_UTIL_PATH "${CUTLASS_BASE}/tools/util/include")
+            break()
+        endif()
+    endforeach()
+endif()
+
+# Warn if CUTLASS not found
+if(NOT DEFINED CUTLASS_PATH OR NOT EXISTS "${CUTLASS_PATH}")
+    message(WARNING "CUTLASS not found. Please set CUTLASS_PATH environment variable or install CUTLASS in one of the common locations.")
+    message(STATUS "Searched in: /data/cutlass, $ENV{HOME}/cutlass, /usr/local/cutlass, /opt/cutlass")
+endif()
 set(CUTLASS_NVCC_ARCHS 89)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --expt-relaxed-constexpr")
 

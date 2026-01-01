@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 
-#define THREAD_PER_BLOCK 256
+#define THREADS_PER_BLOCK 256
 
 /**
  * Warp级别的归约函数
@@ -12,28 +12,28 @@
  * 注意：warp内不需要__syncthreads()，因为warp内线程是同步执行的
  * 
  * @param cache 共享内存数组指针
- * @param tid 线程ID
+ * @param thread_idx 线程ID
  */
-__device__ void warpReduce(volatile float *cache, unsigned int tid)
+__device__ void warp_reduce(volatile float *cache, unsigned int thread_idx)
 {
     // Warp内归约：完全展开，避免循环开销
     // 第1步：thread 0-31 读取 thread 32-63 的值（如果存在）
-    cache[tid] += cache[tid + 32];
+    cache[thread_idx] += cache[thread_idx + 32];
     //__syncthreads();  // warp内不需要同步
     // 第2步：thread 0-15 读取 thread 16-31 的值
-    cache[tid] += cache[tid + 16];
+    cache[thread_idx] += cache[thread_idx + 16];
     //__syncthreads();
     // 第3步：thread 0-7 读取 thread 8-15 的值
-    cache[tid] += cache[tid + 8];
+    cache[thread_idx] += cache[thread_idx + 8];
     //__syncthreads();
     // 第4步：thread 0-3 读取 thread 4-7 的值
-    cache[tid] += cache[tid + 4];
+    cache[thread_idx] += cache[thread_idx + 4];
     //__syncthreads();
     // 第5步：thread 0-1 读取 thread 2-3 的值
-    cache[tid] += cache[tid + 2];
+    cache[thread_idx] += cache[thread_idx + 2];
     //__syncthreads();
     // 第6步：thread 0 读取 thread 1 的值
-    cache[tid] += cache[tid + 1];
+    cache[thread_idx] += cache[thread_idx + 1];
     //__syncthreads();
 }
 
@@ -42,41 +42,41 @@ __device__ void warpReduce(volatile float *cache, unsigned int tid)
  * 相比v4版本，当剩余元素少于等于32时，使用专门的warp归约函数
  * 优点：减少同步开销，提高最后几轮归约的效率
  * 
- * @param d_input 输入数组的全局内存指针
- * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ * @param device_input 输入数组的全局内存指针
+ * @param device_output 输出数组的全局内存指针，每个block输出一个结果
  */
-__global__ void reduce(float *d_input, float *d_output)
+__global__ void reduce(float *device_input, float *device_output)
 {
-    int tid = threadIdx.x;
-    __shared__ float shared[THREAD_PER_BLOCK];
+    int thread_idx = threadIdx.x;
+    __shared__ float shared_data[THREADS_PER_BLOCK];
     
     // 每个线程加载2个元素并相加
-    float *input_begin = d_input + blockDim.x * blockIdx.x * 2;
-    shared[tid] = input_begin[tid] + input_begin[tid + blockDim.x];
+    float *input_begin = device_input + blockDim.x * blockIdx.x * 2;
+    shared_data[thread_idx] = input_begin[thread_idx] + input_begin[thread_idx + blockDim.x];
     __syncthreads();
 
     // 归约循环：直到剩余元素数大于32
-    for (int i = blockDim.x / 2; i > 32; i /= 2)
+    for (int stride = blockDim.x / 2; stride > 32; stride /= 2)
     {
-        if (tid < i)
-            shared[tid] += shared[tid + i];
+        if (thread_idx < stride)
+            shared_data[thread_idx] += shared_data[thread_idx + stride];
         __syncthreads();
     }
     
     // 最后32个元素使用warp归约（不需要__syncthreads）
-    if (tid < 32)
+    if (thread_idx < 32)
     {
-        warpReduce(shared, tid);
+        warp_reduce(shared_data, thread_idx);
     }
-    if (tid == 0)
-        d_output[blockIdx.x] = shared[0];
+    if (thread_idx == 0)
+        device_output[blockIdx.x] = shared_data[0];
 }
 
-bool check(float *out, float *res, int n)
+bool verify_result(float *host_output_data, float *reference_result, int num_elements)
 {
-    for (int i = 0; i < n; i++)
+    for (int element_idx = 0; element_idx < num_elements; element_idx++)
     {
-        if (abs(out[i] - res[i]) > 0.005)
+        if (abs(host_output_data[element_idx] - reference_result[element_idx]) > 0.005)
             return false;
     }
     return true;
@@ -85,53 +85,53 @@ bool check(float *out, float *res, int n)
 int main()
 {
     // printf("hello reduce\n");
-    const int N = 32 * 1024 * 1024;
-    float *input = (float *)malloc(N * sizeof(float));
-    float *d_input;
-    cudaMalloc((void **)&d_input, N * sizeof(float));
+    const int num_elements = 32 * 1024 * 1024;
+    float *host_input_data = (float *)malloc(num_elements * sizeof(float));
+    float *device_input_data;
+    cudaMalloc((void **)&device_input_data, num_elements * sizeof(float));
 
-    int block_num = N / THREAD_PER_BLOCK / 2;
-    float *output = (float *)malloc(block_num * sizeof(float));
-    float *d_output;
-    cudaMalloc((void **)&d_output, block_num * sizeof(float));
-    float *result = (float *)malloc(block_num * sizeof(float));
-    for (int i = 0; i < N; i++)
+    int num_blocks = num_elements / THREADS_PER_BLOCK / 2;
+    float *host_output_data = (float *)malloc(num_blocks * sizeof(float));
+    float *device_output_data;
+    cudaMalloc((void **)&device_output_data, num_blocks * sizeof(float));
+    float *reference_result = (float *)malloc(num_blocks * sizeof(float));
+    for (int element_idx = 0; element_idx < num_elements; element_idx++)
     {
-        input[i] = 2.0 * (float)drand48() - 1.0;
+        host_input_data[element_idx] = 2.0 * (float)drand48() - 1.0;
     }
     // cpu calc
-    for (int i = 0; i < block_num; i++)
+    for (int block_idx = 0; block_idx < num_blocks; block_idx++)
     {
-        float cur = 0;
-        for (int j = 0; j < 2 * THREAD_PER_BLOCK; j++)
+        float partial_sum = 0;
+        for (int element_idx = 0; element_idx < 2 * THREADS_PER_BLOCK; element_idx++)
         {
-            cur += input[i * 2 * THREAD_PER_BLOCK + j];
+            partial_sum += host_input_data[block_idx * 2 * THREADS_PER_BLOCK + element_idx];
         }
-        result[i] = cur;
+        reference_result[block_idx] = partial_sum;
     }
 
-    cudaMemcpy(d_input, input, N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_input_data, host_input_data, num_elements * sizeof(float), cudaMemcpyHostToDevice);
 
-    dim3 Grid(block_num, 1);
-    dim3 Block(THREAD_PER_BLOCK, 1);
-    for (int i = 0; i < 10; i++)
-        reduce<<<Grid, Block>>>(d_input, d_output);
-    cudaMemcpy(output, d_output, block_num * sizeof(float), cudaMemcpyDeviceToHost);
+    dim3 grid_dim(num_blocks, 1);
+    dim3 block_dim(THREADS_PER_BLOCK, 1);
+    for (int iteration_idx = 0; iteration_idx < 10; iteration_idx++)
+        reduce<<<grid_dim, block_dim>>>(device_input_data, device_output_data);
+    cudaMemcpy(host_output_data, device_output_data, num_blocks * sizeof(float), cudaMemcpyDeviceToHost);
 
-    if (check(output, result, block_num))
+    if (verify_result(host_output_data, reference_result, num_blocks))
         printf("the ans is right\n");
     else
     {
         printf("the ans is wrong\n");
-        for (int i = 0; i < block_num; i++)
+        for (int block_idx = 0; block_idx < num_blocks; block_idx++)
         {
-            printf("%lf ", output[i]);
+            printf("%lf ", host_output_data[block_idx]);
         }
         printf("\n");
     }
 
-    cudaFree(d_input);
-    cudaFree(d_output);
+    cudaFree(device_input_data);
+    cudaFree(device_output_data);
     return 0;
 }
 // "command" :

@@ -38,12 +38,12 @@ sgemm:
 spmv:
 	@echo "Building spmv..."
 	@mkdir -p spmv/bin
-	@$(NVCC) $(NVCC_FLAGS) -o spmv/bin/spmv spmv/spmv.cu
+	@$(NVCC) $(NVCC_FLAGS) -o spmv/bin/spmv spmv/spmv.cu -lcusparse
 
 spmm:
 	@echo "Building spmm..."
 	@mkdir -p spmm/bin
-	@$(NVCC) $(NVCC_FLAGS) -o spmm/bin/spmm spmm/spmm.cu
+	@$(NVCC) $(NVCC_FLAGS) -o spmm/bin/spmm spmm/spmm.cu -lcusparse
 
 elementwise:
 	@echo "Building elementwise..."

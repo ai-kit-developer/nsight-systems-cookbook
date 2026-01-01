@@ -4,36 +4,36 @@
 #include <cuda_runtime.h>
 
 // 每个线程块中的线程数
-#define THREAD_PER_BLOCK 256
+#define THREADS_PER_BLOCK 256
 
 /**
  * Reduce操作版本1：使用共享内存
  * 相比v0版本，先将数据从全局内存加载到共享内存，然后在共享内存上进行归约
  * 优点：共享内存访问速度远快于全局内存，性能显著提升
  * 
- * @param d_input 输入数组的全局内存指针
- * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ * @param device_input 输入数组的全局内存指针
+ * @param device_output 输出数组的全局内存指针，每个block输出一个结果
  */
-__global__ void reduce(float *d_input, float *d_output)
+__global__ void reduce(float *device_input, float *device_output)
 {
-    // 声明共享内存数组，每个block有THREAD_PER_BLOCK个元素
-    __shared__ float shared[THREAD_PER_BLOCK];
+    // 声明共享内存数组，每个block有THREADS_PER_BLOCK个元素
+    __shared__ float shared_data[THREADS_PER_BLOCK];
     
     // 计算当前block负责的输入数据起始位置
-    float *input_begin = d_input + blockDim.x * blockIdx.x;
+    float *input_begin = device_input + blockDim.x * blockIdx.x;
     
     // 第一步：将全局内存中的数据加载到共享内存
-    shared[threadIdx.x] = input_begin[threadIdx.x];
+    shared_data[threadIdx.x] = input_begin[threadIdx.x];
     // 同步所有线程，确保所有数据都加载完成
     __syncthreads();
 
     // 第二步：在共享内存上进行二分归约
     // 使用二分归约算法：每次迭代将数据量减半
-    for (int i = 1; i < blockDim.x; i *= 2)
+    for (int stride = 1; stride < blockDim.x; stride *= 2)
     {
         // 只有满足条件的线程参与归约，避免数据竞争
-        if (threadIdx.x % (i * 2) == 0)
-            shared[threadIdx.x] += shared[threadIdx.x + i];
+        if (threadIdx.x % (stride * 2) == 0)
+            shared_data[threadIdx.x] += shared_data[threadIdx.x + stride];
         // 同步所有线程，确保所有加法操作完成后再进行下一轮
         __syncthreads();
     }
@@ -47,14 +47,14 @@ __global__ void reduce(float *d_input, float *d_output)
     
     // 只有thread 0将结果从共享内存写入全局内存输出数组
     if (threadIdx.x == 0)
-        d_output[blockIdx.x] = shared[0];
+        device_output[blockIdx.x] = shared_data[0];
 }
 
-bool check(float *out, float *res, int n)
+bool verify_result(float *host_output_data, float *reference_result, int num_elements)
 {
-    for (int i = 0; i < n; i++)
+    for (int element_idx = 0; element_idx < num_elements; element_idx++)
     {
-        if (abs(out[i] - res[i]) > 0.005)
+        if (abs(host_output_data[element_idx] - reference_result[element_idx]) > 0.005)
             return false;
     }
     return true;
@@ -63,53 +63,53 @@ bool check(float *out, float *res, int n)
 int main()
 {
     // printf("hello reduce\n");
-    const int N = 32 * 1024 * 1024;
-    float *input = (float *)malloc(N * sizeof(float));
-    float *d_input;
-    cudaMalloc((void **)&d_input, N * sizeof(float));
+    const int num_elements = 32 * 1024 * 1024;
+    float *host_input_data = (float *)malloc(num_elements * sizeof(float));
+    float *device_input_data;
+    cudaMalloc((void **)&device_input_data, num_elements * sizeof(float));
 
-    int block_num = N / THREAD_PER_BLOCK;
-    float *output = (float *)malloc((N / THREAD_PER_BLOCK) * sizeof(float));
-    float *d_output;
-    cudaMalloc((void **)&d_output, (N / THREAD_PER_BLOCK) * sizeof(float));
-    float *result = (float *)malloc((N / THREAD_PER_BLOCK) * sizeof(float));
-    for (int i = 0; i < N; i++)
+    int num_blocks = num_elements / THREADS_PER_BLOCK;
+    float *host_output_data = (float *)malloc((num_elements / THREADS_PER_BLOCK) * sizeof(float));
+    float *device_output_data;
+    cudaMalloc((void **)&device_output_data, (num_elements / THREADS_PER_BLOCK) * sizeof(float));
+    float *reference_result = (float *)malloc((num_elements / THREADS_PER_BLOCK) * sizeof(float));
+    for (int element_idx = 0; element_idx < num_elements; element_idx++)
     {
-        input[i] = 2.0 * (float)drand48() - 1.0;
+        host_input_data[element_idx] = 2.0 * (float)drand48() - 1.0;
     }
     // cpu calc
-    for (int i = 0; i < block_num; i++)
+    for (int block_idx = 0; block_idx < num_blocks; block_idx++)
     {
-        float cur = 0;
-        for (int j = 0; j < THREAD_PER_BLOCK; j++)
+        float partial_sum = 0;
+        for (int thread_idx = 0; thread_idx < THREADS_PER_BLOCK; thread_idx++)
         {
-            cur += input[i * THREAD_PER_BLOCK + j];
+            partial_sum += host_input_data[block_idx * THREADS_PER_BLOCK + thread_idx];
         }
-        result[i] = cur;
+        reference_result[block_idx] = partial_sum;
     }
 
-    cudaMemcpy(d_input, input, N * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(device_input_data, host_input_data, num_elements * sizeof(float), cudaMemcpyHostToDevice);
 
-    dim3 Grid(N / THREAD_PER_BLOCK, 1);
-    dim3 Block(THREAD_PER_BLOCK, 1);
-    for (int i = 0; i < 10; i++)
-        reduce<<<Grid, Block>>>(d_input, d_output);
-    cudaMemcpy(output, d_output, block_num * sizeof(float), cudaMemcpyDeviceToHost);
+    dim3 grid_dim(num_elements / THREADS_PER_BLOCK, 1);
+    dim3 block_dim(THREADS_PER_BLOCK, 1);
+    for (int iteration_idx = 0; iteration_idx < 10; iteration_idx++)
+        reduce<<<grid_dim, block_dim>>>(device_input_data, device_output_data);
+    cudaMemcpy(host_output_data, device_output_data, num_blocks * sizeof(float), cudaMemcpyDeviceToHost);
 
-    if (check(output, result, block_num))
+    if (verify_result(host_output_data, reference_result, num_blocks))
         printf("the ans is right\n");
     else
     {
         printf("the ans is wrong\n");
-        for (int i = 0; i < block_num; i++)
+        for (int block_idx = 0; block_idx < num_blocks; block_idx++)
         {
-            printf("%lf ", output[i]);
+            printf("%lf ", host_output_data[block_idx]);
         }
         printf("\n");
     }
 
-    cudaFree(d_input);
-    cudaFree(d_output);
+    cudaFree(device_input_data);
+    cudaFree(device_output_data);
     return 0;
 }
 // "command" :
