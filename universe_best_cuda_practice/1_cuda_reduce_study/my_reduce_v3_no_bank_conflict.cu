@@ -5,17 +5,37 @@
 
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Reduce操作版本3：消除共享内存bank冲突
+ * 相比v2版本，改变了归约的方向和索引方式
+ * 从 i = 1 递增改为 i = blockDim.x/2 递减，避免共享内存bank冲突
+ * 优点：减少共享内存访问冲突，提高内存带宽利用率
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
+    // 声明共享内存数组
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 计算当前block负责的输入数据起始位置
     float *input_begin = d_input + blockDim.x * blockIdx.x;
+    
+    // 将全局内存中的数据加载到共享内存
     shared[threadIdx.x] = input_begin[threadIdx.x];
     __syncthreads();
 
+    // 改进的归约循环：从大到小递减，避免bank冲突
+    // 第1轮：thread 0-127 读取 thread 128-255 的值
+    // 第2轮：thread 0-63 读取 thread 64-127 的值
+    // 以此类推，直到只剩下thread 0
     for (int i = blockDim.x / 2; i > 0; i /= 2)
     {
+        // 只有前i个线程参与归约，索引连续，避免bank冲突
         if (threadIdx.x < i)
             shared[threadIdx.x] += shared[threadIdx.x + i];
+        // 同步所有线程
         __syncthreads();
     }
     // if (threadIdx.x == 0 or 2 or 4 or 6)

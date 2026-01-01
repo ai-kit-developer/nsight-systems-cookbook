@@ -5,35 +5,65 @@
 
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Warp级别的归约函数
+ * 在warp内（32个线程）进行完全展开的归约操作
+ * 使用volatile关键字确保编译器不会优化掉这些内存访问
+ * 注意：warp内不需要__syncthreads()，因为warp内线程是同步执行的
+ * 
+ * @param cache 共享内存数组指针
+ * @param tid 线程ID
+ */
 __device__ void warpReduce(volatile float *cache, unsigned int tid)
 {
+    // Warp内归约：完全展开，避免循环开销
+    // 第1步：thread 0-31 读取 thread 32-63 的值（如果存在）
     cache[tid] += cache[tid + 32];
-    //__syncthreads();
+    //__syncthreads();  // warp内不需要同步
+    // 第2步：thread 0-15 读取 thread 16-31 的值
     cache[tid] += cache[tid + 16];
     //__syncthreads();
+    // 第3步：thread 0-7 读取 thread 8-15 的值
     cache[tid] += cache[tid + 8];
     //__syncthreads();
+    // 第4步：thread 0-3 读取 thread 4-7 的值
     cache[tid] += cache[tid + 4];
     //__syncthreads();
+    // 第5步：thread 0-1 读取 thread 2-3 的值
     cache[tid] += cache[tid + 2];
     //__syncthreads();
+    // 第6步：thread 0 读取 thread 1 的值
     cache[tid] += cache[tid + 1];
     //__syncthreads();
 }
+
+/**
+ * Reduce操作版本5：展开最后一个warp的归约
+ * 相比v4版本，当剩余元素少于等于32时，使用专门的warp归约函数
+ * 优点：减少同步开销，提高最后几轮归约的效率
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
     int tid = threadIdx.x;
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 每个线程加载2个元素并相加
     float *input_begin = d_input + blockDim.x * blockIdx.x * 2;
     shared[tid] = input_begin[tid] + input_begin[tid + blockDim.x];
     __syncthreads();
 
+    // 归约循环：直到剩余元素数大于32
     for (int i = blockDim.x / 2; i > 32; i /= 2)
     {
         if (tid < i)
             shared[tid] += shared[tid + i];
         __syncthreads();
     }
+    
+    // 最后32个元素使用warp归约（不需要__syncthreads）
     if (tid < 32)
     {
         warpReduce(shared, tid);

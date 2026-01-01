@@ -51,30 +51,55 @@ void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int 
         }
     }
 }
+/**
+ * CUDA SGEMM版本1：使用共享内存
+ * 相比v0版本，先将数据从全局内存加载到共享内存，提高数据重用
+ * 注意：此版本有bug，共享内存大小设置不正确，实际应该使用BLOCK_SIZE x BLOCK_SIZE
+ * 
+ * @tparam BLOCK_SIZE block的大小（通常为16）
+ * @tparam K_ K维度的大小（此参数设计有问题）
+ * @param A_ptr 矩阵A的全局内存指针
+ * @param B_ptr 矩阵B的全局内存指针
+ * @param C_ptr 结果矩阵C的全局内存指针
+ * @param M 矩阵A的行数
+ * @param N 矩阵B的列数
+ * @param K 矩阵A的列数（矩阵B的行数）
+ */
 template <unsigned int BLOCK_SIZE, unsigned int K_>
 __global__ void cuda_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int N, const int K)
 {
+    // 计算当前线程负责的输出元素位置
     const int x = threadIdx.x + blockDim.x * blockIdx.x;
     const int y = threadIdx.y + blockDim.y * blockIdx.y;
+    
+    // 计算当前block负责的A和B矩阵的起始位置
     float *A_ptr_start = A_ptr + blockDim.y * blockIdx.y * K;
     float *B_ptr_start = B_ptr + blockDim.x * blockIdx.x;
 
+    // 声明共享内存：用于缓存A和B矩阵的块
+    // 注意：此版本的设计有问题，共享内存大小应该与block大小匹配
     __shared__ float a_shared[BLOCK_SIZE][K_];
     __shared__ float b_shared[K_][BLOCK_SIZE];
 
+    // 将数据从全局内存加载到共享内存
+    // 分块加载：每次加载blockDim.x个元素
     for (int s = 0; s < K; s += blockDim.x)
     {
         a_shared[threadIdx.y][threadIdx.x + s] = A_ptr_start[threadIdx.x + s + threadIdx.y * K];
         b_shared[threadIdx.y + s][threadIdx.x] = B_ptr_start[(threadIdx.y + s) * N + threadIdx.x];
     }
 
+    // 同步所有线程，确保数据加载完成
     __syncthreads();
 
+    // 在共享内存上进行矩阵乘法计算
     float temp = 0.f;
     for (int k = 0; k < K; k++)
     {
         temp += a_shared[threadIdx.y][k] * b_shared[k][threadIdx.x];
     }
+    
+    // 将结果写回全局内存
     C_ptr[x + y * N] = temp;
 }
 

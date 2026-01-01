@@ -29,40 +29,71 @@ __device__ __forceinline__ float warpReduceSum(float sum) {
     return sum;
 }
 
-// if N>= 128
+/**
+ * Sgemv_v1: 使用向量化加载优化的 SGEMV 实现
+ * 计算 y = A * x，其中 A 是 M×N 矩阵，x 是 N 维向量，y 是 M 维向量
+ * 
+ * 优化策略：
+ * 1. 使用 float4 向量化加载，一次加载 4 个 float
+ * 2. 减少全局内存访问次数（从 N 次减少到 N/4 次）
+ * 3. 提高内存带宽利用率
+ * 4. 每个线程处理 4 个元素，减少线程数量需求
+ * 
+ * 适用场景：N >= 128 且 N 是 128 的倍数（32 * 4 = 128）
+ * 
+ * 性能优势：
+ * - 向量化内存访问提高带宽利用率
+ * - 减少循环迭代次数
+ * - 更好的指令级并行性
+ */
 __global__ void Sgemv_v1( 
-    float * __restrict__ A,
-    float * __restrict__ x,
-    float * __restrict__ y, 
-    const int M,
-    const int N) {
-    // Block index
+    float * __restrict__ A,  // 输入矩阵 A (M×N)
+    float * __restrict__ x,  // 输入向量 x (N×1)
+    float * __restrict__ y,  // 输出向量 y (M×1)
+    const int M,             // 矩阵 A 的行数
+    const int N) {           // 矩阵 A 的列数（向量 x 的长度）
+    // 线程块索引
     int bx = blockIdx.x;
 
-    // Thread index
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
+    // 线程在块内的索引
+    int tx = threadIdx.x;  // x 方向线程索引
+    int ty = threadIdx.y;  // y 方向线程索引
 
-    const int warp_size=32;
-    int laneId= tx % warp_size;
+    const int warp_size=32;  // Warp 大小
+    int laneId= tx % warp_size;  // 线程在 warp 内的索引（0-31）
+    // 计算当前线程处理的行索引
     int current_row = blockDim.y * bx + ty;
 
+    // 边界检查：确保行索引在有效范围内
     if(current_row < M){
-        float res=0;
+        float res=0;  // 累加器，存储部分内积结果
+        // 计算每个线程需要处理的 float4 向量数量
+        // 每个线程处理 4 个元素，所以迭代次数是 N/(warp_size*4)
         int kIteration = (N/warp_size)/4;
-        if(kIteration==0) kIteration=1;
+        if(kIteration==0) kIteration=1;  // 确保至少处理一个向量
+        
+        // 优化：将 A 矩阵的当前行指针提前计算，减少重复计算
         A = &A[current_row*N];
+        
+        // 展开循环，使用向量化加载
         #pragma unroll
         for(int i=0; i< kIteration; i++){
+            // 计算当前 float4 向量的索引
             int current_col_vec = (i*warp_size + laneId);
+            // 使用 float4 向量化加载：一次加载 4 个 float
             float4 current_val= reinterpret_cast<float4 *>(A)[current_col_vec];
             float4 current_x = reinterpret_cast<float4 *>(x)[current_col_vec];
+            // 计算 4 个元素的内积并累加
             res += current_val.x*current_x.x;
             res += current_val.y*current_x.y;
             res += current_val.z*current_x.z;
             res += current_val.w*current_x.w;
         }
+        
+        // 使用 warp 内归约将 32 个线程的部分结果归约到 laneId=0 的线程
         res = warpReduceSum<warp_size>(res);
+        
+        // 将最终结果写入输出向量
         if(laneId==0) y[current_row]=res;
     }
 }

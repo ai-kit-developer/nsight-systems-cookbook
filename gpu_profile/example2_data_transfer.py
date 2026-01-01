@@ -58,6 +58,15 @@ if not (USE_TORCH or USE_CUPY):
     print("⚠ 警告：没有可用的 GPU 库，将使用 CPU 模拟（性能分析可能不准确）")
 
 def get_color(name):
+    """
+    颜色辅助函数 - 为 NVTX 标记提供颜色
+    
+    参数:
+        name (str): 颜色名称
+    
+    返回:
+        str 或 tuple: 颜色值，用于 NVTX 标记
+    """
     colors = {
         "red": "red",
         "green": "green",
@@ -236,21 +245,55 @@ def good_practice_batch_transfer(size=1000, iterations=100):
                 time.sleep(0.01)
 
 if __name__ == "__main__":
+    """
+    主函数：执行数据传输性能对比测试
+    
+    测试流程:
+    1. 执行不好的做法（频繁小传输）
+    2. 执行好的做法（批量传输）
+    3. 对比性能差异
+    4. 输出性能分析命令
+    """
     print("CPU-GPU 数据传输性能分析示例\n")
     
-    # 不好的做法
+    # 测试参数
+    test_size = 1000  # 每次传输的数据大小
+    test_iterations = 50  # 迭代次数
+    
+    # 不好的做法：频繁小数据传输
+    print("=" * 50)
     start = time.time()
-    bad_practice_small_transfers(size=1000, iterations=50)
+    bad_practice_small_transfers(size=test_size, iterations=test_iterations)
     bad_time = time.time() - start
     print(f"频繁传输耗时: {bad_time:.4f} 秒\n")
     
-    # 好的做法
+    # 好的做法：批量传输
+    print("=" * 50)
     start = time.time()
-    good_practice_batch_transfer(size=1000, iterations=50)
+    good_practice_batch_transfer(size=test_size, iterations=test_iterations)
     good_time = time.time() - start
     print(f"批量传输耗时: {good_time:.4f} 秒\n")
     
-    print(f"性能提升: {bad_time/good_time:.2f}x")
-    print("\n使用 nsys profile 查看数据传输时间线：")
-    print("nsys profile --trace=cuda,nvtx,osrt --output=example2_data_transfer.nsys-rep python example2_data_transfer.py")
+    # 性能对比
+    print("=" * 50)
+    if good_time > 0:
+        speedup = bad_time / good_time
+        print(f"性能提升: {speedup:.2f}x")
+        print(f"时间节省: {(bad_time - good_time):.4f} 秒 ({(1 - good_time/bad_time)*100:.1f}%)")
+        print(f"\n理论分析:")
+        print(f"  - 小传输效率: ~0.2% (固定开销占比高)")
+        print(f"  - 批量传输效率: ~16.7% (固定开销占比低)")
+        print(f"  - 预期提升: ~83x")
+    else:
+        print("警告: 执行时间过短，无法准确测量")
+    
+    # 输出性能分析命令
+    print("\n" + "=" * 50)
+    print("使用 nsys profile 查看数据传输时间线：")
+    print("nsys profile --trace=cuda,nvtx,osrt \\")
+    print("  --output=example2_data_transfer.nsys-rep \\")
+    print("  python example2_data_transfer.py")
+    print("\n查看结果：")
+    print("  nsys-ui example2_data_transfer.nsys-rep")
+    print("=" * 50)
 

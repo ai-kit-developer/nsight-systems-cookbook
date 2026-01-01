@@ -29,35 +29,66 @@ __device__ __forceinline__ float warpReduceSum(float sum) {
     return sum;
 }
 
-// if N <= 16
+/**
+ * Sgemv_v2: 针对小 N 值优化的 SGEMV 实现
+ * 计算 y = A * x，其中 A 是 M×N 矩阵，x 是 N 维向量，y 是 M 维向量
+ * 
+ * 优化策略：
+ * 1. 每个 warp 处理多行（ROW_PER_WARP 行）
+ * 2. 将 32 个线程分成多个组，每组处理一行
+ * 3. 每个线程只处理一个元素，适合小 N 值的情况
+ * 4. 使用模板参数在编译时确定每行使用的线程数
+ * 
+ * 适用场景：N <= 16
+ * 
+ * 性能优势：
+ * - 提高线程利用率（当 N 很小时，避免线程浪费）
+ * - 减少线程块数量
+ * - 更好的负载均衡
+ * 
+ * @tparam ROW_PER_WARP 每个 warp 处理的行数
+ */
 template <
-    const int ROW_PER_WARP
+    const int ROW_PER_WARP  // 每个 warp 处理的行数
     > 
 __global__ void Sgemv_v2( 
-    float * __restrict__ A,
-    float * __restrict__ x,
-    float * __restrict__ y, 
-    const int M,
-    const int N) {
-    // Block index
+    float * __restrict__ A,  // 输入矩阵 A (M×N)
+    float * __restrict__ x,  // 输入向量 x (N×1)
+    float * __restrict__ y,  // 输出向量 y (M×1)
+    const int M,             // 矩阵 A 的行数
+    const int N) {           // 矩阵 A 的列数（向量 x 的长度）
+    // 线程块索引
     int bx = blockIdx.x;
 
-    // Thread index
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
+    // 线程在块内的索引
+    int tx = threadIdx.x;  // x 方向线程索引
+    int ty = threadIdx.y;  // y 方向线程索引
 
-    const int warp_size=32;
-    int laneId= tx % warp_size;
+    const int warp_size=32;  // Warp 大小
+    int laneId= tx % warp_size;  // 线程在 warp 内的索引（0-31）
+    
+    // 计算当前 warp 处理的起始行
     int current_warp_row = (blockDim.y * bx + ty) * ROW_PER_WARP;
+    
+    // 计算处理一行所需的线程数（warp 大小除以每 warp 处理的行数）
     const int kWarp_size = warp_size / ROW_PER_WARP;
+    // 计算线程在处理一行的线程组内的索引
     int kLaneId = laneId % kWarp_size;
+    // 计算当前线程处理的行索引
     int current_thread_row = current_warp_row + laneId / kWarp_size;
 
+    // 边界检查：确保行索引在有效范围内
     if(current_thread_row < M){
-        float res=0;
+        float res=0;  // 累加器
+        // 每个线程只处理一个元素
         int current_col = kLaneId;
+        // 计算内积的一个元素
         res += A[current_thread_row * N + current_col] * x[current_col];
+        
+        // 使用部分 warp 进行归约（只使用处理当前行的线程）
         res = warpReduceSum<kWarp_size>(res);
+        
+        // 将最终结果写入输出向量（由每行的第一个线程写入）
         if(kLaneId==0) y[current_thread_row]=res;
     }
 }

@@ -5,13 +5,31 @@
 
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Reduce操作版本4（方案A）：加载时进行第一次归约
+ * 相比v3版本，每个线程在加载数据时同时处理2个元素，减少内存访问次数
+ * 优点：提高内存访问效率，减少全局内存访问次数
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
+    // 声明共享内存数组
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 每个block处理2倍的数据：blockDim.x * 2 个元素
+    // 计算当前block负责的输入数据起始位置
     float *input_begin = d_input + blockDim.x * blockIdx.x * 2;
+    
+    // 优化：每个线程加载2个元素并立即相加，减少后续归约轮数
+    // thread 0 处理 input_begin[0] 和 input_begin[256]
+    // thread 1 处理 input_begin[1] 和 input_begin[257]
+    // 以此类推
     shared[threadIdx.x] = input_begin[threadIdx.x] + input_begin[threadIdx.x + blockDim.x];
     __syncthreads();
 
+    // 在共享内存上进行二分归约（从blockDim.x/2开始）
     for (int i = blockDim.x / 2; i > 0; i /= 2)
     {
         if (threadIdx.x < i)

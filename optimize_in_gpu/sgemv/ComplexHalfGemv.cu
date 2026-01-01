@@ -18,22 +18,44 @@
 
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4*>(&(pointer))[0])
 
+/**
+ * warpReduceSum: 使用 Shuffle 指令的 Warp 内归约函数（half 精度版本）
+ * 用于对 half 类型的值进行 warp 内归约
+ * 优化策略与 float 版本相同，但使用 half 精度以节省内存和带宽
+ */
 template <unsigned int WarpSize>
 __device__ __forceinline__ half warpReduceSum(half sum) {
     if (WarpSize >= 32)sum += __shfl_down_sync(0xffffffff, sum, 16); // 0-16, 1-17, 2-18, etc.
-    if (WarpSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);// 0-8, 1-9, 2-10, etc.
-    if (WarpSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);// 0-4, 1-5, 2-6, etc.
-    if (WarpSize >= 4)sum += __shfl_down_sync(0xffffffff, sum, 2);// 0-2, 1-3, 4-6, 5-7, etc.
-    if (WarpSize >= 2)sum += __shfl_down_sync(0xffffffff, sum, 1);// 0-1, 2-3, 4-5, etc.
+    if (WarpSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);  // 0-8, 1-9, 2-10, etc.
+    if (WarpSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);   // 0-4, 1-5, 2-6, etc.
+    if (WarpSize >= 4)sum += __shfl_down_sync(0xffffffff, sum, 2);   // 0-2, 1-3, 4-6, 5-7, etc.
+    if (WarpSize >= 2)sum += __shfl_down_sync(0xffffffff, sum, 1);   // 0-1, 2-3, 4-5, etc.
     return sum;
 }
 
+/**
+ * ComplexHalfGemv: 半精度复数矩阵向量乘法内核
+ * 计算 y = A * x，其中 A 是 M×N 复数矩阵，x 是 N 维复数向量，y 是 M 维复数向量
+ * 
+ * 优化策略：
+ * 1. 使用 half 精度（FP16）减少内存占用和带宽需求
+ * 2. 使用 float4 向量化加载，一次加载 4 个 half（相当于 2 个复数）
+ * 3. 每个线程处理多个复数元素，提高计算密度
+ * 4. 使用 warp 内归约减少共享内存使用
+ * 
+ * 适用场景：
+ * - 需要高吞吐量的复数矩阵向量乘法
+ * - 对精度要求不是特别严格的场景
+ * - 内存带宽受限的场景
+ * 
+ * 注意：half 精度在 CPU 上不支持，所以验证时需要使用 float 精度
+ */
 __global__ void ComplexHalfGemv( 
-    cuHalfComplex * __restrict__ A,
-    cuHalfComplex * __restrict__ x,
-    cuHalfComplex * __restrict__ y, 
-    const int M,
-    const int N) {
+    cuHalfComplex * __restrict__ A,  // 输入复数矩阵 A (M×N)
+    cuHalfComplex * __restrict__ x,   // 输入复数向量 x (N×1)
+    cuHalfComplex * __restrict__ y,   // 输出复数向量 y (M×1)
+    const int M,                      // 矩阵 A 的行数
+    const int N) {                    // 矩阵 A 的列数（向量 x 的长度）
     // Block index
     int bx = blockIdx.x;
 

@@ -145,41 +145,78 @@ void readMtxFile(int is_weighted, int n, int m,
     free(w);
 }
 
+/**
+ * warpReduceSum: 使用 Shuffle 指令的 Warp 内归约函数
+ * 优化：
+ * 1. 使用 __shfl_down_sync 指令进行 warp 内数据交换
+ * 2. 不需要共享内存，直接在寄存器间交换数据
+ * 3. 延迟更低，带宽更高（寄存器访问比共享内存快）
+ * 4. 使用 __forceinline__ 强制内联，减少函数调用开销
+ */
 template <unsigned int WarpSize>
 __device__ __forceinline__ float warpReduceSum(float sum) {
     if (WarpSize >= 32)sum += __shfl_down_sync(0xffffffff, sum, 16); // 0-16, 1-17, 2-18, etc.
-    if (WarpSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);// 0-8, 1-9, 2-10, etc.
-    if (WarpSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);// 0-4, 1-5, 2-6, etc.
-    if (WarpSize >= 4)sum += __shfl_down_sync(0xffffffff, sum, 2);// 0-2, 1-3, 4-6, 5-7, etc.
-    if (WarpSize >= 2)sum += __shfl_down_sync(0xffffffff, sum, 1);// 0-1, 2-3, 4-5, etc.
+    if (WarpSize >= 16)sum += __shfl_down_sync(0xffffffff, sum, 8);  // 0-8, 1-9, 2-10, etc.
+    if (WarpSize >= 8)sum += __shfl_down_sync(0xffffffff, sum, 4);   // 0-4, 1-5, 2-6, etc.
+    if (WarpSize >= 4)sum += __shfl_down_sync(0xffffffff, sum, 2);   // 0-2, 1-3, 4-6, 5-7, etc.
+    if (WarpSize >= 2)sum += __shfl_down_sync(0xffffffff, sum, 1);   // 0-1, 2-3, 4-5, etc.
     return sum;
 }
 
+/**
+ * My_spmv_csr_kernel: 稀疏矩阵向量乘法（SpMV）内核
+ * 计算 y = A * x，其中 A 是稀疏矩阵（CSR 格式），x 是密集向量，y 是输出向量
+ * 
+ * 实现策略：
+ * 1. 每个线程组（vector）处理矩阵的一行
+ * 2. 线程组内的线程并行处理该行的非零元素
+ * 3. 使用 warp 内归约得到该行的最终结果
+ * 
+ * 优化点：
+ * - 使用模板参数在编译时确定线程组大小
+ * - 根据矩阵稀疏度动态选择线程组大小
+ * - 使用 Shuffle 指令进行高效归约
+ * 
+ * @tparam IndexType 索引类型（通常是 int）
+ * @tparam ValueType 值类型（通常是 float）
+ * @tparam VECTORS_PER_BLOCK 每个线程块中的线程组数量
+ * @tparam THREADS_PER_VECTOR 每个线程组中的线程数（通常是 2, 4, 8, 16, 32）
+ */
 template <typename IndexType, typename ValueType, unsigned int VECTORS_PER_BLOCK, unsigned int THREADS_PER_VECTOR>
-__global__ void My_spmv_csr_kernel(const IndexType row_num,
-                       const IndexType * A_row_offset,
-                       const IndexType * A_col_index,
-                       const ValueType * A_value,
-                       const ValueType * x,
-                       ValueType * y)
+__global__ void My_spmv_csr_kernel(const IndexType row_num,        // 矩阵行数
+                       const IndexType * A_row_offset,              // CSR 格式：行偏移数组
+                       const IndexType * A_col_index,               // CSR 格式：列索引数组
+                       const ValueType * A_value,                   // CSR 格式：非零值数组
+                       const ValueType * x,                         // 输入向量 x
+                       ValueType * y)                                // 输出向量 y
 {
+    // 计算线程块中的线程总数
     const IndexType THREADS_PER_BLOCK = VECTORS_PER_BLOCK * THREADS_PER_VECTOR;
-    const IndexType thread_id   = THREADS_PER_BLOCK * blockIdx.x + threadIdx.x;    // global thread index
-    const IndexType thread_lane = threadIdx.x & (THREADS_PER_VECTOR - 1);          // thread index within the vector
-    const IndexType row_id   = thread_id   /  THREADS_PER_VECTOR;               // global vector index
+    // 全局线程索引
+    const IndexType thread_id   = THREADS_PER_BLOCK * blockIdx.x + threadIdx.x;
+    // 线程在向量组内的索引（0 到 THREADS_PER_VECTOR-1）
+    const IndexType thread_lane = threadIdx.x & (THREADS_PER_VECTOR - 1);
+    // 当前线程组处理的行索引
+    const IndexType row_id   = thread_id   /  THREADS_PER_VECTOR;
 
+    // 边界检查：确保行索引在有效范围内
     if(row_id < row_num){
-        const IndexType row_start = A_row_offset[row_id];                  //same as: row_start = Ap[row];
-        const IndexType row_end   = A_row_offset[row_id+1];
+        // 获取当前行的非零元素范围
+        const IndexType row_start = A_row_offset[row_id];      // 当前行第一个非零元素的索引
+        const IndexType row_end   = A_row_offset[row_id+1];   // 下一行第一个非零元素的索引
 
-        // initialize local sum
+        // 初始化局部累加器
         ValueType sum = 0;
 
-        // accumulate local sums
+        // 并行累加：线程组内的线程并行处理该行的非零元素
+        // 每个线程处理间隔为 THREADS_PER_VECTOR 的元素
         for(IndexType jj = row_start + thread_lane; jj < row_end; jj += THREADS_PER_VECTOR)
             sum += A_value[jj] * x[ A_col_index[jj] ];
 
+        // 使用 warp 内归约将线程组内的部分结果归约
         sum = warpReduceSum<THREADS_PER_VECTOR>(sum);
+        
+        // 由线程组内的第一个线程（thread_lane == 0）写入最终结果
         if (thread_lane == 0){
             y[row_id] = sum;
         }   

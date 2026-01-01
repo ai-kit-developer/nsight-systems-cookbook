@@ -115,41 +115,65 @@ void spmm_cpu_kernel(std::vector<IndexType> &row_offset,
     }
 }
 
-// dim3 dimBlock(THREAD_NUM_PER_BLOCK);
-// dim3 dimGrid(row_num/THREAD_NUM_PER_BLOCK, row_num);
+/**
+ * My_spmm_csr_vector_kernel_v0: 稀疏矩阵-密集矩阵乘法（SpMM）内核 - 基础版本
+ * 计算 C = A * B，其中 A 是稀疏矩阵（CSR 格式），B 和 C 是密集矩阵
+ * 
+ * 实现策略：
+ * 1. 每个线程计算输出矩阵 C 的一个元素
+ * 2. 线程通过 (blockIdx.y, blockIdx.x * THREAD_NUM_PER_BLOCK + threadIdx.x) 定位到 C 的元素
+ * 3. 对于 C 的每一行，遍历 A 的对应行的非零元素
+ * 4. 累加 A 的非零值乘以 B 的对应元素
+ * 
+ * 矩阵维度：
+ * - A: (num_rows, col_num) - 稀疏矩阵，CSR 格式
+ * - B: (col_num, ldb) - 密集矩阵
+ * - C: (num_rows, ldc) - 输出密集矩阵
+ * 
+ * @tparam THREAD_NUM_PER_BLOCK 每个线程块中的线程数
+ */
 template <unsigned int THREAD_NUM_PER_BLOCK>
-__global__ void My_spmm_csr_vector_kernel_v0(const int num_rows,
-    const int * A_row_offset,
-    const int * A_col_index,
-    const float * A_value,
-    const float * B,
-    float * C,
-    const int ldb,
-    const int ldc){
-    // Block index
-    int bx = blockIdx.x;
-    int by = blockIdx.y;
+__global__ void My_spmm_csr_vector_kernel_v0(const int num_rows,        // 矩阵 A 的行数
+    const int * A_row_offset,              // CSR 格式：行偏移数组
+    const int * A_col_index,               // CSR 格式：列索引数组
+    const float * A_value,                 // CSR 格式：非零值数组
+    const float * B,                       // 输入密集矩阵 B
+    float * C,                             // 输出密集矩阵 C
+    const int ldb,                         // 矩阵 B 的行宽（leading dimension）
+    const int ldc){                        // 矩阵 C 的行宽（leading dimension）
+    // 线程块索引
+    int bx = blockIdx.x;  // x 方向的线程块索引
+    int by = blockIdx.y;  // y 方向的线程块索引
 
-    // Thread index
+    // 线程在块内的索引
     int tx = threadIdx.x;
 
-    // matrix C row_index
-    int C_row_index = by;
-    int C_col_index = bx * THREAD_NUM_PER_BLOCK + tx;
+    // 计算当前线程处理的输出矩阵 C 的元素位置
+    int C_row_index = by;  // C 的行索引
+    int C_col_index = bx * THREAD_NUM_PER_BLOCK + tx;  // C 的列索引
 
+    // 边界检查：确保索引在有效范围内
     if(C_row_index < num_rows && C_col_index < ldc){
-        int row_start = A_row_offset[C_row_index];
-        int row_end = A_row_offset[C_row_index + 1];
-        int iter_num = row_end - row_start;
+        // 获取矩阵 A 当前行的非零元素范围
+        int row_start = A_row_offset[C_row_index];      // 当前行第一个非零元素的索引
+        int row_end = A_row_offset[C_row_index + 1];   // 下一行第一个非零元素的索引
+        int iter_num = row_end - row_start;            // 当前行的非零元素数量
+        
+        // 初始化累加器
         float sum = 0.0;
+        
+        // 遍历当前行的所有非零元素
         for(int i=0; i<iter_num; i++){
-            int index = row_start + i;
-            int current_col = A_col_index[index];
-            float current_val = A_value[index];
+            int index = row_start + i;                    // 非零元素在 CSR 数组中的索引
+            int current_col = A_col_index[index];         // 非零元素在 A 中的列索引
+            float current_val = A_value[index];           // 非零元素的值
+            // 从矩阵 B 中加载对应元素：B[current_col][C_col_index]
             float reg_B = B[ current_col * ldb + C_col_index];
+            // 累加：A[C_row_index][current_col] * B[current_col][C_col_index]
             sum += current_val * reg_B;
         }
 
+        // 将结果写入输出矩阵 C
         C[C_row_index * ldc + C_col_index] = sum;
     }
 }

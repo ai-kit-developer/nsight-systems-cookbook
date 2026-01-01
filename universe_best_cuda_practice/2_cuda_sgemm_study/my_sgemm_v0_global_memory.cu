@@ -1,18 +1,37 @@
 #include <cstdio>
+// 矩阵访问宏定义：简化二维矩阵的索引计算
 #define A(i, j) a[(i) * n + (j)]
 #define B(i, j) b[(i) * n + (j)]
 
+/**
+ * 生成随机矩阵
+ * 
+ * @param m 矩阵行数
+ * @param n 矩阵列数
+ * @param a 矩阵数据指针
+ */
 void random_matrix(int m, int n, float *a)
 {
     for (int i = 0; i < m; i++)
         for (int j = 0; j < n; j++)
 #if 1
+            // 生成[-1, 1]范围内的随机浮点数
             A(i, j) = 2.0 * (float)drand48() - 1.0;
 #else
+            // 生成测试用的模式数据
             A(i, j) = (j - i) % 3;
 #endif
 }
 
+/**
+ * 比较两个矩阵，返回最大差值
+ * 
+ * @param m 矩阵行数
+ * @param n 矩阵列数
+ * @param a 第一个矩阵
+ * @param b 第二个矩阵
+ * @return 最大差值
+ */
 float compare_matrices(int m, int n, float *a, float *b)
 {
     int i, j;
@@ -25,6 +44,7 @@ float compare_matrices(int m, int n, float *a, float *b)
         {
             diff = abs(A(i, j) - B(i, j));
             max_diff = (diff > max_diff ? diff : max_diff);
+            // 只打印第一个超过阈值的错误
             if (0 == printed)
                 if (max_diff > 0.5f || max_diff < -0.5f)
                 {
@@ -36,6 +56,16 @@ float compare_matrices(int m, int n, float *a, float *b)
     return max_diff;
 }
 
+/**
+ * CPU端实现的单精度矩阵乘法 C = A * B
+ * 
+ * @param A_ptr 矩阵A，大小为 M x K
+ * @param B_ptr 矩阵B，大小为 K x N
+ * @param C_ptr 结果矩阵C，大小为 M x N
+ * @param M 矩阵A的行数
+ * @param N 矩阵B的列数
+ * @param K 矩阵A的列数（矩阵B的行数）
+ */
 void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int N, const int K)
 {
     for (int m = 0; m < M; m++)
@@ -45,6 +75,7 @@ void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int 
             float temp = 0.f;
             for (int k = 0; k < K; k++)
             {
+                // C[m][n] = sum(A[m][k] * B[k][n])
                 temp += A_ptr[m * K + k] * B_ptr[k * N + n];
             }
             C_ptr[m * N + n] = temp;
@@ -52,17 +83,37 @@ void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int 
     }
 }
 
+/**
+ * CUDA SGEMM版本0：使用全局内存
+ * 这是最基础的实现，直接从全局内存读取数据
+ * 缺点：全局内存访问延迟高，没有数据重用，性能较差
+ * 
+ * @param A_ptr 矩阵A的全局内存指针，大小为 M x K
+ * @param B_ptr 矩阵B的全局内存指针，大小为 K x N
+ * @param C_ptr 结果矩阵C的全局内存指针，大小为 M x N
+ * @param M 矩阵A的行数
+ * @param N 矩阵B的列数
+ * @param K 矩阵A的列数（矩阵B的行数）
+ */
 __global__ void cuda_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int N, const int K)
 {
+    // 计算当前线程负责的输出元素位置
     const int x = threadIdx.x + blockDim.x * blockIdx.x;
     const int y = threadIdx.y + blockDim.y * blockIdx.y;
-    float *A_ptr_start = A_ptr + blockDim.y * blockIdx.y * K;
-    float *B_ptr_start = B_ptr + blockDim.x * blockIdx.x;
+    
+    // 计算当前block负责的A和B矩阵的起始位置
+    float *A_ptr_start = A_ptr + blockDim.y * blockIdx.y * K;  // A矩阵的行起始位置
+    float *B_ptr_start = B_ptr + blockDim.x * blockIdx.x;     // B矩阵的列起始位置
+    
+    // 计算点积：C[y][x] = sum(A[y][k] * B[k][x])
     float temp = 0.f;
     for (int k = 0; k < K; k++)
     {
+        // 直接从全局内存读取A和B的元素并相乘累加
         temp += A_ptr_start[threadIdx.y * K + k] * B_ptr_start[k * N + threadIdx.x];
     }
+    
+    // 将结果写回全局内存
     C_ptr[x + y * N] = temp;
 }
 

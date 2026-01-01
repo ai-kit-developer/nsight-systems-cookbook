@@ -5,10 +5,18 @@
 
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Warp级别的归约函数
+ * 在warp内（32个线程）进行完全展开的归约操作
+ * 使用volatile关键字确保编译器不会优化掉这些内存访问
+ * 
+ * @param cache 共享内存数组指针
+ * @param tid 线程ID
+ */
 __device__ void warpReduce(volatile float *cache, unsigned int tid)
 {
     cache[tid] += cache[tid + 32];
-    //__syncthreads();
+    //__syncthreads();  // warp内不需要同步
     cache[tid] += cache[tid + 16];
     //__syncthreads();
     cache[tid] += cache[tid + 8];
@@ -20,13 +28,29 @@ __device__ void warpReduce(volatile float *cache, unsigned int tid)
     cache[tid] += cache[tid + 1];
     //__syncthreads();
 }
+
+/**
+ * Reduce操作版本6：完全展开归约循环
+ * 相比v5版本，使用条件编译完全展开归约循环，消除循环开销
+ * 优点：编译器可以更好地优化代码，提高执行效率
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
     int tid = threadIdx.x;
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 每个block处理2倍的数据
     float *input_begin = d_input + blockDim.x * blockIdx.x * 2;
+    
+    // 每个线程加载2个元素并立即相加
     shared[tid] = input_begin[tid] + input_begin[tid + blockDim.x];
     __syncthreads();
+    
+    // 完全展开的归约循环：使用条件编译消除循环
+    // 注释掉的代码是原来的循环版本：
     // #pragma unroll
     //     for (int i = blockDim.x / 2; i > 32; i /= 2)
     //     {
@@ -34,6 +58,8 @@ __global__ void reduce(float *d_input, float *d_output)
     //             shared[tid] += shared[tid + i];
     //         __syncthreads();
     //     }
+    
+    // 根据THREAD_PER_BLOCK的值，展开归约步骤
     if (THREAD_PER_BLOCK >= 512)
     {
         if (tid < 256)
@@ -53,10 +79,13 @@ __global__ void reduce(float *d_input, float *d_output)
         __syncthreads();
     }
 
+    // 最后32个元素使用warp归约（不需要__syncthreads）
     if (tid < 32)
     {
         warpReduce(shared, tid);
     }
+    
+    // 只有thread 0将结果写入全局内存
     if (tid == 0)
         d_output[blockIdx.x] = shared[0];
 }

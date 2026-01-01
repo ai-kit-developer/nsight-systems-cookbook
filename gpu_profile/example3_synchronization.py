@@ -59,6 +59,15 @@ if not (USE_TORCH or USE_CUPY):
     print("⚠ 警告：没有可用的 GPU 库，将使用 CPU 模拟（性能分析可能不准确）")
 
 def get_color(name):
+    """
+    颜色辅助函数 - 为 NVTX 标记提供颜色
+    
+    参数:
+        name (str): 颜色名称
+    
+    返回:
+        str: 颜色名称字符串
+    """
     colors = {
         "red": "red",
         "green": "green",
@@ -280,25 +289,59 @@ def demonstrate_pipeline_stall():
                 time.sleep(0.01)
 
 if __name__ == "__main__":
+    """
+    主函数：执行同步性能对比测试
+    
+    测试流程:
+    1. 执行不好的做法（频繁同步）
+    2. 执行好的做法（延迟同步）
+    3. 对比性能差异
+    4. 演示流水线阻塞问题
+    5. 输出性能分析命令
+    """
     print("同步性能分析示例\n")
     
-    # 频繁同步
+    # 测试参数
+    test_iterations = 50  # 迭代次数
+    
+    # 不好的做法：频繁同步
+    print("=" * 50)
     start = time.time()
-    bad_practice_frequent_sync(iterations=50)
+    bad_practice_frequent_sync(iterations=test_iterations)
     bad_time = time.time() - start
     print(f"频繁同步耗时: {bad_time:.4f} 秒\n")
     
-    # 延迟同步
+    # 好的做法：延迟同步
+    print("=" * 50)
     start = time.time()
-    good_practice_deferred_sync(iterations=50)
+    good_practice_deferred_sync(iterations=test_iterations)
     good_time = time.time() - start
     print(f"延迟同步耗时: {good_time:.4f} 秒\n")
     
-    print(f"性能提升: {bad_time/good_time:.2f}x\n")
+    # 性能对比
+    print("=" * 50)
+    if good_time > 0:
+        speedup = bad_time / good_time
+        print(f"性能提升: {speedup:.2f}x")
+        print(f"时间节省: {(bad_time - good_time):.4f} 秒 ({(1 - good_time/bad_time)*100:.1f}%)")
+        print(f"\n理论分析:")
+        print(f"  - 频繁同步: 每次操作后同步，总时间 = N × (计算时间 + 同步时间)")
+        print(f"  - 延迟同步: 批量启动后同步一次，总时间 ≈ 计算时间 + 1 × 同步时间")
+        print(f"  - 预期提升: 当 N 很大时，接近 N 倍")
+    else:
+        print("警告: 执行时间过短，无法准确测量")
     
     # 流水线阻塞演示
+    print("\n" + "=" * 50)
     demonstrate_pipeline_stall()
     
-    print("\n使用 nsys profile 查看同步点：")
-    print("nsys profile --trace=cuda,nvtx --sampling-frequency=1000 --output=example3_synchronization.nsys-rep python example3_synchronization.py")
+    # 输出性能分析命令
+    print("\n" + "=" * 50)
+    print("使用 nsys profile 查看同步点：")
+    print("nsys profile --trace=cuda,nvtx --sampling-frequency=1000 \\")
+    print("  --output=example3_synchronization.nsys-rep \\")
+    print("  python example3_synchronization.py")
+    print("\n查看结果：")
+    print("  nsys-ui example3_synchronization.nsys-rep")
+    print("=" * 50)
 

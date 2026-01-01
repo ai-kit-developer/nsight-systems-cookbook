@@ -3,27 +3,49 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 
+// 每个线程块中的线程数
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Reduce操作版本1：使用共享内存
+ * 相比v0版本，先将数据从全局内存加载到共享内存，然后在共享内存上进行归约
+ * 优点：共享内存访问速度远快于全局内存，性能显著提升
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
+    // 声明共享内存数组，每个block有THREAD_PER_BLOCK个元素
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 计算当前block负责的输入数据起始位置
     float *input_begin = d_input + blockDim.x * blockIdx.x;
+    
+    // 第一步：将全局内存中的数据加载到共享内存
     shared[threadIdx.x] = input_begin[threadIdx.x];
+    // 同步所有线程，确保所有数据都加载完成
     __syncthreads();
 
+    // 第二步：在共享内存上进行二分归约
+    // 使用二分归约算法：每次迭代将数据量减半
     for (int i = 1; i < blockDim.x; i *= 2)
     {
+        // 只有满足条件的线程参与归约，避免数据竞争
         if (threadIdx.x % (i * 2) == 0)
             shared[threadIdx.x] += shared[threadIdx.x + i];
+        // 同步所有线程，确保所有加法操作完成后再进行下一轮
         __syncthreads();
     }
+    // 注释说明：上述循环的展开形式示例
     // if (threadIdx.x == 0 or 2 or 4 or 6)
     //     input_begin[threadIdx.x] += input_begin[threadIdx.x + 1];
     // if (threadIdx.x == 0 or 4)
     //     input_begin[threadIdx.x] += input_begin[threadIdx.x + 2];
     // if (threadIdx.x == 0)
     //     input_begin[threadIdx.x] += input_begin[threadIdx.x + 4];
+    
+    // 只有thread 0将结果从共享内存写入全局内存输出数组
     if (threadIdx.x == 0)
         d_output[blockIdx.x] = shared[0];
 }

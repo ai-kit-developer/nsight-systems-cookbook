@@ -3,15 +3,30 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 
+// 每个线程块中的线程数（方案B使用128，方案A使用256）
 #define THREAD_PER_BLOCK 128
 
+/**
+ * Reduce操作版本4（方案B）：加载时进行第一次归约，使用更少的线程
+ * 相比方案A，使用128个线程而不是256个，每个线程仍然处理2个元素
+ * 优点：减少共享内存使用，可能提高占用率
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
+    // 声明共享内存数组（使用更小的数组）
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 每个block处理2倍的数据：blockDim.x * 2 个元素
     float *input_begin = d_input + blockDim.x * blockIdx.x * 2;
+    
+    // 每个线程加载2个元素并立即相加
     shared[threadIdx.x] = input_begin[threadIdx.x] + input_begin[threadIdx.x + blockDim.x];
     __syncthreads();
 
+    // 在共享内存上进行二分归约
     for (int i = blockDim.x / 2; i > 0; i /= 2)
     {
         if (threadIdx.x < i)

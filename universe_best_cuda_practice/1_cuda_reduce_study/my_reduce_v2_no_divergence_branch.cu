@@ -5,22 +5,41 @@
 
 #define THREAD_PER_BLOCK 256
 
+/**
+ * Reduce操作版本2：消除分支发散
+ * 相比v1版本，改进了归约循环中的条件判断，减少线程分支发散
+ * 优点：所有活跃线程执行相同的代码路径，提高warp执行效率
+ * 
+ * @param d_input 输入数组的全局内存指针
+ * @param d_output 输出数组的全局内存指针，每个block输出一个结果
+ */
 __global__ void reduce(float *d_input, float *d_output)
 {
+    // 声明共享内存数组
     __shared__ float shared[THREAD_PER_BLOCK];
+    
+    // 计算当前block负责的输入数据起始位置
     float *input_begin = d_input + blockDim.x * blockIdx.x;
+    
+    // 将全局内存中的数据加载到共享内存
     shared[threadIdx.x] = input_begin[threadIdx.x];
     __syncthreads();
 
+    // 改进的归约循环：使用连续索引避免分支发散
+    // 原来的条件 threadIdx.x % (i * 2) == 0 会导致warp内线程分支发散
+    // 新方法：使用 threadIdx.x < blockDim.x / (2 * i) 让活跃线程连续
     for (int i = 1; i < blockDim.x; i *= 2)
     {
-        // if (threadIdx.x % (i * 2) == 0)
+        // 改进：使用连续索引范围判断，减少分支发散
+        // if (threadIdx.x % (i * 2) == 0)  // 旧方法：会导致分支发散
         if (threadIdx.x < blockDim.x / (2 * i))
         {
+            // 计算实际参与归约的索引位置
             int index = threadIdx.x * 2 * i;
             shared[index] += shared[index + i];
         }
 
+        // 同步所有线程
         __syncthreads();
     }
     // if (threadIdx.x == 0 or 2 or 4 or 6)

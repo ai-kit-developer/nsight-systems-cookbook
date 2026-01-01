@@ -52,8 +52,27 @@ void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int 
     }
 }
 
+// 宏定义：使用float4向量化加载
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 
+/**
+ * CUDA SGEMM版本6：寄存器外积 + float4向量化
+ * 结合v5的寄存器外积和v4的float4向量化加载
+ * 优点：最大化利用向量化加载和寄存器外积的优势
+ * 
+ * @tparam M_NUM_PER_BLOCK 每个block在M维度处理的元素数量
+ * @tparam N_NUM_PER_BLOCK 每个block在N维度处理的元素数量
+ * @tparam K_NUM_PER_BLOCK 每个block在K维度处理的元素数量
+ * @tparam M_NUM_PER_THREAD 每个线程在M维度处理的元素数量
+ * @tparam N_NUM_PER_THREAD 每个线程在N维度处理的元素数量
+ * @tparam K_NUM_PER_THREAD 每个线程在K维度处理的元素数量
+ * @param A_ptr 矩阵A的全局内存指针
+ * @param B_ptr 矩阵B的全局内存指针
+ * @param C_ptr 结果矩阵C的全局内存指针
+ * @param M 矩阵A的行数
+ * @param N 矩阵B的列数
+ * @param K 矩阵A的列数（矩阵B的行数）
+ */
 template <unsigned int M_NUM_PER_BLOCK,
           unsigned int N_NUM_PER_BLOCK,
           unsigned int K_NUM_PER_BLOCK,

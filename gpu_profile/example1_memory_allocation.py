@@ -57,8 +57,19 @@ if not (USE_TORCH or USE_CUPY):
     print("⚠ 警告：没有可用的 GPU 库，将使用 CPU 模拟（性能分析可能不准确）")
 
 def get_color(name):
-    """颜色辅助函数 - 使用字符串颜色以避免matplotlib依赖"""
-    # 使用字符串颜色名称，不需要matplotlib
+    """
+    颜色辅助函数 - 为 NVTX 标记提供颜色
+    
+    参数:
+        name (str): 颜色名称（red, green, blue, yellow, orange）
+    
+    返回:
+        str: 颜色名称字符串，用于 NVTX 标记
+    
+    注意:
+        - 使用字符串颜色名称，避免 matplotlib 依赖
+        - 如果颜色不存在，返回 "gray"
+    """
     colors = {
         "red": "red",
         "green": "green",
@@ -217,21 +228,51 @@ def good_practice_reuse_allocation(size=1024, iterations=100):
                 cp.cuda.Stream.null.synchronize()
 
 if __name__ == "__main__":
+    """
+    主函数：执行内存分配性能对比测试
+    
+    测试流程:
+    1. 执行不好的做法（频繁分配）
+    2. 执行好的做法（内存重用）
+    3. 对比性能差异
+    4. 输出性能分析命令
+    """
     print("GPU 内存分配性能分析示例\n")
     
-    # 不好的做法
+    # 测试参数
+    test_size = 512  # 矩阵大小
+    test_iterations = 50  # 迭代次数
+    
+    # 不好的做法：频繁内存分配
+    print("=" * 50)
     start = time.time()
-    bad_practice_frequent_allocation(size=512, iterations=50)
+    bad_practice_frequent_allocation(size=test_size, iterations=test_iterations)
     bad_time = time.time() - start
     print(f"频繁分配耗时: {bad_time:.4f} 秒\n")
     
-    # 好的做法
+    # 好的做法：内存重用
+    print("=" * 50)
     start = time.time()
-    good_practice_reuse_allocation(size=512, iterations=50)
+    good_practice_reuse_allocation(size=test_size, iterations=test_iterations)
     good_time = time.time() - start
     print(f"内存重用耗时: {good_time:.4f} 秒\n")
     
-    print(f"性能提升: {bad_time/good_time:.2f}x")
-    print("\n使用 nsys profile 查看详细的内存分配时间线：")
-    print("nsys profile --trace=cuda,nvtx --cuda-memory-usage=true --output=example1_memory_allocation.nsys-rep python example1_memory_allocation.py")
+    # 性能对比
+    print("=" * 50)
+    if good_time > 0:
+        speedup = bad_time / good_time
+        print(f"性能提升: {speedup:.2f}x")
+        print(f"时间节省: {(bad_time - good_time):.4f} 秒 ({(1 - good_time/bad_time)*100:.1f}%)")
+    else:
+        print("警告: 执行时间过短，无法准确测量")
+    
+    # 输出性能分析命令
+    print("\n" + "=" * 50)
+    print("使用 nsys profile 查看详细的内存分配时间线：")
+    print("nsys profile --trace=cuda,nvtx --cuda-memory-usage=true \\")
+    print("  --output=example1_memory_allocation.nsys-rep \\")
+    print("  python example1_memory_allocation.py")
+    print("\n查看结果：")
+    print("  nsys-ui example1_memory_allocation.nsys-rep")
+    print("=" * 50)
 

@@ -21,23 +21,45 @@
         printf ("%s %d CUDA: %s\n", __FILE__,  __LINE__, cudaGetErrorString(e));		\
 }
 
-// K: ldA
-// N: ldB
+/**
+ * Sgemm: 优化的单精度矩阵乘法（SGEMM）内核 - 版本 3
+ * 计算 C = A * B，其中 A 是 M×K 矩阵，B 是 K×N 矩阵，C 是 M×N 矩阵
+ * 
+ * 相比 v1 版本的优化：
+ * 1. 优化的共享内存访问模式：使用 warp 级别的索引计算，减少 bank conflict
+ * 2. 改进的寄存器分片布局：使用 a_tile_index 和 b_tile_index 优化访问
+ * 3. 更高效的结果存储：分块存储结果，提高写入带宽
+ * 
+ * 优化策略：
+ * 1. 分块计算：将矩阵分成块，每个线程块计算 C 的一个子块
+ * 2. 共享内存缓存：将 A 和 B 的子块加载到共享内存，减少全局内存访问
+ * 3. 寄存器分片：每个线程计算 C 的一个小分片，使用寄存器存储中间结果
+ * 4. 向量化加载：使用 float4 向量化加载，提高内存带宽利用率
+ * 5. Warp 级优化：使用 warp ID 和 lane ID 优化共享内存访问模式
+ * 
+ * 模板参数说明：
+ * @tparam BLOCK_SIZE_M 每个线程块计算的 C 块的高度
+ * @tparam BLOCK_SIZE_K 每个线程块加载到共享内存的 A 块的宽度（也是 B 块的高度）
+ * @tparam BLOCK_SIZE_N 每个线程块计算的 C 块的宽度
+ * @tparam THREAD_SIZE_Y 每个线程计算的 C 分片的高度
+ * @tparam THREAD_SIZE_X 每个线程计算的 C 分片的宽度
+ * @tparam ENABLE_DOUBLE_BUFFER 是否启用双缓冲优化
+ */
 template <
-    const int BLOCK_SIZE_M,  // height of block of C that each thread block calculate
-    const int BLOCK_SIZE_K,  // width of block of A that each thread block load into shared memory
-    const int BLOCK_SIZE_N,  // width of block of C that each thread block calculate
-    const int THREAD_SIZE_Y, // height of block of C that each thread calculate
-    const int THREAD_SIZE_X,  // width of block of C that each thread calculate
-    const bool ENABLE_DOUBLE_BUFFER // whether enable double buffering or not
+    const int BLOCK_SIZE_M,  // 每个线程块计算的 C 块的高度
+    const int BLOCK_SIZE_K,  // 每个线程块加载到共享内存的 A 块的宽度
+    const int BLOCK_SIZE_N,  // 每个线程块计算的 C 块的宽度
+    const int THREAD_SIZE_Y, // 每个线程计算的 C 分片的高度
+    const int THREAD_SIZE_X,  // 每个线程计算的 C 分片的宽度
+    const bool ENABLE_DOUBLE_BUFFER // 是否启用双缓冲优化
     > 
 __global__ void Sgemm( 
-    float * __restrict__ A,
-    float * __restrict__ B,
-    float * __restrict__ C, 
-    const int M,
-    const int N,
-    const int K) {
+    float * __restrict__ A,  // 输入矩阵 A (M×K)
+    float * __restrict__ B,  // 输入矩阵 B (K×N)
+    float * __restrict__ C,  // 输出矩阵 C (M×N)
+    const int M,             // 矩阵 A 的行数（也是 C 的行数）
+    const int N,             // 矩阵 B 的列数（也是 C 的列数）
+    const int K) {           // 矩阵 A 的列数（也是 B 的行数）
     // Block index
     int bx = blockIdx.x;
     int by = blockIdx.y;

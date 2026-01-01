@@ -52,8 +52,27 @@ void cpu_sgemm(float *A_ptr, float *B_ptr, float *C_ptr, const int M, const int 
     }
 }
 
+// 宏定义：使用float4向量化加载
 #define FETCH_FLOAT4(pointer) (reinterpret_cast<float4 *>(&(pointer))[0])
 
+/**
+ * CUDA SGEMM版本8：双缓冲（Double Buffer）
+ * 相比v7版本，使用双缓冲技术重叠计算和内存加载
+ * 优点：隐藏内存访问延迟，提高计算和内存访问的并行度
+ * 
+ * @tparam BLOCK_SIZE_M 每个thread block计算的C矩阵块的高度
+ * @tparam BLOCK_SIZE_N 每个thread block加载到共享内存的A矩阵块的宽度
+ * @tparam BLOCK_SIZE_K 每个thread block计算的C矩阵块的宽度
+ * @tparam THREAD_SIZE_Y 每个线程计算的C矩阵块的高度
+ * @tparam THREAD_SIZE_X 每个线程计算的C矩阵块的宽度
+ * @tparam ENABLE_DOUBLE_BUFFER 是否启用双缓冲
+ * @param A_ptr 矩阵A的全局内存指针
+ * @param B_ptr 矩阵B的全局内存指针
+ * @param C_ptr 结果矩阵C的全局内存指针
+ * @param M 矩阵A的行数
+ * @param N 矩阵B的列数
+ * @param K 矩阵A的列数（矩阵B的行数）
+ */
 template <const int BLOCK_SIZE_M,  // height of block of C that each thread block calculate
           const int BLOCK_SIZE_N,  // width of block of A that each thread block load into shared memory
           const int BLOCK_SIZE_K,  // width of block of C that each thread block calculate
