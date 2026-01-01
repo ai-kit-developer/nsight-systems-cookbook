@@ -261,7 +261,7 @@ bash install_nsys_latest.sh
 
 欢迎提交 Issue 和 Pull Request！
 
-如有问题，可以联系：xiandong_liu@foxmail.com
+如有问题，可以联系：seaofstars.developer@gmail.com
 
 ## 📄 许可证
 
