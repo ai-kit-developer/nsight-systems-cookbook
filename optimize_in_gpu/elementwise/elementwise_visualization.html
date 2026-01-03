@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA 逐元素操作可视化 - Elementwise Add</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .control-group input[type="range"] {
+            width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info-panel {
+            background: #e8f4f8;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .info-panel p {
+            line-height: 1.6;
+            color: #555;
+        }
+
+        .visualization-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1200px) {
+            .visualization-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .viz-panel {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .viz-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        canvas {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+
+        .comparison-panel {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+
+        .comparison-panel h4 {
+            color: #856404;
+            margin-bottom: 8px;
+        }
+
+        .comparison-panel table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .comparison-panel th,
+        .comparison-panel td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .comparison-panel th {
+            background: #ffc107;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ CUDA 逐元素操作可视化</h1>
+            <p>Elementwise Add - 向量化内存访问优化演示</p>
+        </div>
+
+        <div class="content">
+            <div class="info-panel">
+                <h3>📖 算法说明</h3>
+                <p>
+                    逐元素加法是最简单的 GPU 操作之一。通过使用向量化内存访问（float2、float4），
+                    可以显著提高内存带宽利用率。本可视化展示了基础版本（float）和优化版本（float4）
+                    的内存访问模式和计算过程。
+                </p>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>数组大小:</label>
+                    <input type="range" id="arraySize" min="16" max="128" step="16" value="32">
+                    <span id="arraySizeValue">32</span>
+                </div>
+                <div class="control-group">
+                    <label>向量化类型:</label>
+                    <select id="vectorType">
+                        <option value="float">float (基础版本)</option>
+                        <option value="float2">float2 (2个元素)</option>
+                        <option value="float4" selected>float4 (4个元素)</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>速度:</label>
+                    <input type="range" id="speed" min="1" max="10" value="5">
+                    <span id="speedValue">5</span>
+                </div>
+                <button id="playBtn">▶️ 开始动画</button>
+                <button id="resetBtn">🔄 重置</button>
+                <button id="stepBtn">⏭️ 单步执行</button>
+            </div>
+
+            <div class="visualization-container">
+                <div class="viz-panel">
+                    <h3>📊 内存访问模式</h3>
+                    <canvas id="memoryCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>已加载 (A)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2196F3;"></div>
+                            <span>已加载 (B)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #9C27B0;"></div>
+                            <span>已写入 (C)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <h3>🧵 线程执行状态</h3>
+                    <canvas id="threadCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>活跃线程</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #9E9E9E;"></div>
+                            <span>空闲线程</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="label">当前线程索引</div>
+                    <div class="value" id="currentThread">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">已处理元素</div>
+                    <div class="value" id="processedElements">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">内存事务数</div>
+                    <div class="value" id="memoryTransactions">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">完成度</div>
+                    <div class="value" id="completion">0%</div>
+                </div>
+            </div>
+
+            <div class="comparison-panel">
+                <h4>📈 性能对比（理论值）</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>向量化类型</th>
+                            <th>每个线程处理元素</th>
+                            <th>内存事务数</th>
+                            <th>带宽利用率</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>float</td>
+                            <td>1</td>
+                            <td id="txFloat">-</td>
+                            <td>91.9%</td>
+                        </tr>
+                        <tr>
+                            <td>float2</td>
+                            <td>2</td>
+                            <td id="txFloat2">-</td>
+                            <td>93.1%</td>
+                        </tr>
+                        <tr>
+                            <td>float4</td>
+                            <td>4</td>
+                            <td id="txFloat4">-</td>
+                            <td>93.8%</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        let config = {
+            arraySize: 32,
+            vectorType: 'float4',
+            speed: 5,
+            isPlaying: false,
+            currentThread: 0,
+            processedElements: 0,
+            animationFrame: null
+        };
+
+        // 状态
+        let arrayA = [];
+        let arrayB = [];
+        let arrayC = [];
+        let activeThreads = new Set();
+        let computingThreads = new Set();
+        let loadedIndicesA = new Set();
+        let loadedIndicesB = new Set();
+        let writtenIndices = new Set();
+
+        // Canvas 元素
+        const memoryCanvas = document.getElementById('memoryCanvas');
+        const threadCanvas = document.getElementById('threadCanvas');
+        const memoryCtx = memoryCanvas.getContext('2d');
+        const threadCtx = threadCanvas.getContext('2d');
+
+        // 获取向量化大小
+        function getVectorSize() {
+            switch(config.vectorType) {
+                case 'float2': return 2;
+                case 'float4': return 4;
+                default: return 1;
+            }
+        }
+
+        // 计算线程数
+        function getThreadCount() {
+            return Math.ceil(config.arraySize / getVectorSize());
+        }
+
+        // 初始化
+        function init() {
+            config.arraySize = parseInt(document.getElementById('arraySize').value);
+            config.vectorType = document.getElementById('vectorType').value;
+            config.currentThread = 0;
+            config.processedElements = 0;
+            
+            // 初始化数组
+            arrayA = new Array(config.arraySize).fill(0).map((_, i) => i + 1);
+            arrayB = new Array(config.arraySize).fill(0).map((_, i) => (i + 1) * 2);
+            arrayC = new Array(config.arraySize).fill(0);
+            
+            activeThreads.clear();
+            computingThreads.clear();
+            loadedIndicesA.clear();
+            loadedIndicesB.clear();
+            writtenIndices.clear();
+            
+            updateDisplays();
+            draw();
+        }
+
+        // 更新显示
+        function updateDisplays() {
+            document.getElementById('arraySizeValue').textContent = config.arraySize;
+            document.getElementById('speedValue').textContent = config.speed;
+            document.getElementById('currentThread').textContent = config.currentThread;
+            document.getElementById('processedElements').textContent = config.processedElements;
+            
+            const vectorSize = getVectorSize();
+            const threadCount = getThreadCount();
+            const memoryTx = Math.ceil(config.processedElements / vectorSize) * 3; // A, B, C
+            document.getElementById('memoryTransactions').textContent = memoryTx;
+            
+            const completion = Math.min(100, Math.round((config.processedElements / config.arraySize) * 100));
+            document.getElementById('completion').textContent = completion + '%';
+            
+            // 更新性能对比表
+            const totalTx = config.arraySize * 3;
+            document.getElementById('txFloat').textContent = totalTx;
+            document.getElementById('txFloat2').textContent = Math.ceil(totalTx / 2);
+            document.getElementById('txFloat4').textContent = Math.ceil(totalTx / 4);
+        }
+
+        // 执行一步
+        function stepCompute() {
+            const vectorSize = getVectorSize();
+            const threadCount = getThreadCount();
+            
+            if (config.currentThread >= threadCount) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+                return;
+            }
+
+            // 清除之前的状态
+            activeThreads.clear();
+            computingThreads.clear();
+            loadedIndicesA.clear();
+            loadedIndicesB.clear();
+            writtenIndices.clear();
+
+            // 当前线程处理
+            const startIdx = config.currentThread * vectorSize;
+            const endIdx = Math.min(startIdx + vectorSize, config.arraySize);
+            
+            activeThreads.add(config.currentThread);
+            computingThreads.add(config.currentThread);
+            
+            // 标记加载的索引
+            for (let i = startIdx; i < endIdx; i++) {
+                loadedIndicesA.add(i);
+                loadedIndicesB.add(i);
+            }
+            
+            // 执行计算
+            for (let i = startIdx; i < endIdx; i++) {
+                arrayC[i] = arrayA[i] + arrayB[i];
+                writtenIndices.add(i);
+            }
+            
+            config.processedElements = endIdx;
+            config.currentThread++;
+            updateDisplays();
+            draw();
+
+            // 准备下一步
+            if (config.isPlaying) {
+                setTimeout(() => {
+                    stepCompute();
+                }, 1000 / config.speed);
+            }
+        }
+
+        // 绘制内存访问
+        function drawMemory() {
+            const ctx = memoryCtx;
+            const width = memoryCanvas.width;
+            const height = memoryCanvas.height;
+            const padding = 40;
+            const barWidth = (width - 2 * padding) / config.arraySize;
+            const maxValue = Math.max(...arrayA, ...arrayB, ...arrayC, 1);
+            const barMaxHeight = (height - 2 * padding - 100) / 3;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('内存访问模式 (向量化: ' + config.vectorType + ')', width / 2, 25);
+
+            // 绘制数组 A
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('数组 A:', padding, 50);
+            for (let i = 0; i < config.arraySize; i++) {
+                const x = padding + i * barWidth;
+                const value = arrayA[i];
+                const barHeight = (value / maxValue) * barMaxHeight;
+                const y = 60 + barMaxHeight - barHeight;
+
+                if (loadedIndicesA.has(i)) {
+                    ctx.fillStyle = '#4CAF50';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, barWidth - 2, barHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, barWidth - 2, barHeight);
+
+                ctx.fillStyle = '#000';
+                ctx.font = '8px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(value.toFixed(0), x + barWidth / 2, y - 3);
+            }
+
+            // 绘制数组 B
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('数组 B:', padding, 60 + barMaxHeight + 20);
+            for (let i = 0; i < config.arraySize; i++) {
+                const x = padding + i * barWidth;
+                const value = arrayB[i];
+                const barHeight = (value / maxValue) * barMaxHeight;
+                const y = 60 + barMaxHeight + 30 + barMaxHeight - barHeight;
+
+                if (loadedIndicesB.has(i)) {
+                    ctx.fillStyle = '#2196F3';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, barWidth - 2, barHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, barWidth - 2, barHeight);
+
+                ctx.fillStyle = '#000';
+                ctx.font = '8px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(value.toFixed(0), x + barWidth / 2, y - 3);
+            }
+
+            // 绘制数组 C (结果)
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('数组 C (结果):', padding, 60 + barMaxHeight * 2 + 40);
+            for (let i = 0; i < config.arraySize; i++) {
+                const x = padding + i * barWidth;
+                const value = arrayC[i];
+                const barHeight = (value / maxValue) * barMaxHeight;
+                const y = 60 + barMaxHeight * 2 + 50 + barMaxHeight - barHeight;
+
+                if (writtenIndices.has(i)) {
+                    ctx.fillStyle = '#9C27B0';
+                } else if (computingThreads.has(Math.floor(i / getVectorSize()))) {
+                    ctx.fillStyle = '#FF9800';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, barWidth - 2, barHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, barWidth - 2, barHeight);
+
+                if (value > 0) {
+                    ctx.fillStyle = '#000';
+                    ctx.font = '8px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(value.toFixed(0), x + barWidth / 2, y - 3);
+                }
+
+                // 绘制索引
+                ctx.fillStyle = '#666';
+                ctx.font = '8px Arial';
+                ctx.fillText(`[${i}]`, x + barWidth / 2, height - padding - 10);
+            }
+        }
+
+        // 绘制线程状态
+        function drawThreads() {
+            const ctx = threadCtx;
+            const width = threadCanvas.width;
+            const height = threadCanvas.height;
+            const padding = 40;
+            const threadCount = getThreadCount();
+            const cellWidth = (width - 2 * padding) / threadCount;
+            const cellHeight = 40;
+            const vectorSize = getVectorSize();
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('线程执行状态 (共 ' + threadCount + ' 个线程)', width / 2, 25);
+
+            for (let t = 0; t < threadCount; t++) {
+                const x = padding + t * cellWidth;
+                const y = padding + 20;
+                const startIdx = t * vectorSize;
+                const endIdx = Math.min(startIdx + vectorSize, config.arraySize);
+
+                // 确定颜色
+                if (computingThreads.has(t)) {
+                    ctx.fillStyle = '#FF9800';
+                } else if (activeThreads.has(t)) {
+                    ctx.fillStyle = '#4CAF50';
+                } else if (t < config.currentThread) {
+                    ctx.fillStyle = '#9E9E9E';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, cellWidth - 2, cellHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, cellWidth - 2, cellHeight);
+
+                // 绘制线程信息
+                ctx.fillStyle = '#000';
+                ctx.font = '10px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(`T${t}`, x + cellWidth / 2, y + 15);
+                ctx.font = '8px Arial';
+                ctx.fillText(`[${startIdx}-${endIdx-1}]`, x + cellWidth / 2, y + 28);
+            }
+
+            // 绘制说明
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(
+                `每个线程处理 ${vectorSize} 个元素 (${config.vectorType})`,
+                width / 2,
+                height - padding
+            );
+        }
+
+        // 绘制所有内容
+        function draw() {
+            drawMemory();
+            drawThreads();
+        }
+
+        // 事件监听
+        document.getElementById('arraySize').addEventListener('input', (e) => {
+            config.arraySize = parseInt(e.target.value);
+            document.getElementById('arraySizeValue').textContent = config.arraySize;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('vectorType').addEventListener('change', (e) => {
+            config.vectorType = e.target.value;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('speed').addEventListener('input', (e) => {
+            config.speed = parseInt(e.target.value);
+            document.getElementById('speedValue').textContent = config.speed;
+        });
+
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (config.isPlaying) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            } else {
+                if (config.currentThread >= getThreadCount()) {
+                    init();
+                }
+                config.isPlaying = true;
+                document.getElementById('playBtn').textContent = '⏸️ 暂停';
+                stepCompute();
+            }
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            init();
+        });
+
+        document.getElementById('stepBtn').addEventListener('click', () => {
+            if (config.currentThread >= getThreadCount()) {
+                init();
+                return;
+            }
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            stepCompute();
+        });
+
+        // 响应式调整 Canvas 大小
+        function resizeCanvases() {
+            const container = document.querySelector('.visualization-container');
+            const panels = container.querySelectorAll('.viz-panel');
+            panels.forEach(panel => {
+                const canvas = panel.querySelector('canvas');
+                if (canvas) {
+                    const rect = panel.getBoundingClientRect();
+                    canvas.width = rect.width - 40;
+                    canvas.height = Math.min(500, (rect.width - 40) * 0.8);
+                    draw();
+                }
+            });
+        }
+
+        window.addEventListener('resize', resizeCanvases);
+
+        // 初始化
+        init();
+        resizeCanvases();
+    </script>
+</body>
+</html>
+

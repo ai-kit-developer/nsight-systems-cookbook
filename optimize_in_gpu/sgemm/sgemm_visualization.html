@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA 矩阵-矩阵乘法可视化 - SGEMM</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .control-group input[type="range"] {
+            width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info-panel {
+            background: #e8f4f8;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .info-panel p {
+            line-height: 1.6;
+            color: #555;
+        }
+
+        .visualization-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1200px) {
+            .visualization-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .viz-panel {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .viz-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        canvas {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔢 CUDA 矩阵-矩阵乘法可视化</h1>
+            <p>SGEMM (Single-precision GEneral Matrix Multiply) - 分块与共享内存优化</p>
+        </div>
+
+        <div class="content">
+            <div class="info-panel">
+                <h3>📖 算法说明</h3>
+                <p>
+                    SGEMM 计算 C = A × B，使用分块计算和共享内存优化。每个线程块计算 C 的一个子块，
+                    通过将 A 和 B 的子块加载到共享内存，减少全局内存访问。每个线程计算 C 的一个小分片，
+                    使用寄存器存储中间结果。
+                </p>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>矩阵大小:</label>
+                    <input type="range" id="matrixSize" min="8" max="32" step="8" value="16">
+                    <span id="matrixSizeValue">16x16</span>
+                </div>
+                <div class="control-group">
+                    <label>块大小:</label>
+                    <select id="blockSize">
+                        <option value="4">4x4</option>
+                        <option value="8" selected>8x8</option>
+                        <option value="16">16x16</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>速度:</label>
+                    <input type="range" id="speed" min="1" max="10" value="2">
+                    <span id="speedValue">2</span>
+                </div>
+                <button id="playBtn">▶️ 开始动画</button>
+                <button id="resetBtn">🔄 重置</button>
+                <button id="stepBtn">⏭️ 单步执行</button>
+            </div>
+
+            <div class="visualization-container">
+                <div class="viz-panel">
+                    <h3>📐 矩阵分块计算</h3>
+                    <canvas id="matrixCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>当前块</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在加载到共享内存</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2196F3;"></div>
+                            <span>已计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #E0E0E0;"></div>
+                            <span>未计算</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <h3>💾 共享内存状态</h3>
+                    <canvas id="sharedMemoryCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>共享内存 A</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2196F3;"></div>
+                            <span>共享内存 B</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在使用</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="label">当前块</div>
+                    <div class="value" id="currentBlock">(0,0)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">K 维度迭代</div>
+                    <div class="value" id="kIteration">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">已计算块数</div>
+                    <div class="value" id="computedBlocks">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">完成度</div>
+                    <div class="value" id="completion">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        let config = {
+            matrixSize: 16,
+            blockSize: 8,
+            speed: 2,
+            isPlaying: false,
+            currentBlockRow: 0,
+            currentBlockCol: 0,
+            currentK: 0,
+            animationFrame: null
+        };
+
+        // 状态
+        let matrixA = [];
+        let matrixB = [];
+        let matrixC = [];
+        let sharedA = [];
+        let sharedB = [];
+        let activeBlocks = new Set();
+
+        // Canvas 元素
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const sharedMemoryCanvas = document.getElementById('sharedMemoryCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const sharedCtx = sharedMemoryCanvas.getContext('2d');
+
+        // 初始化矩阵
+        function initMatrices() {
+            const size = config.matrixSize;
+            matrixA = [];
+            matrixB = [];
+            matrixC = [];
+            
+            for (let i = 0; i < size; i++) {
+                matrixA[i] = [];
+                matrixB[i] = [];
+                matrixC[i] = [];
+                for (let j = 0; j < size; j++) {
+                    matrixA[i][j] = (i * size + j) % 10 + 1;
+                    matrixB[i][j] = ((i + j) * 3) % 10 + 1;
+                    matrixC[i][j] = 0;
+                }
+            }
+        }
+
+        // 初始化共享内存
+        function initSharedMemory() {
+            sharedA = [];
+            sharedB = [];
+            for (let i = 0; i < config.blockSize; i++) {
+                sharedA[i] = [];
+                sharedB[i] = [];
+                for (let j = 0; j < config.blockSize; j++) {
+                    sharedA[i][j] = 0;
+                    sharedB[i][j] = 0;
+                }
+            }
+        }
+
+        // 初始化
+        function init() {
+            config.matrixSize = parseInt(document.getElementById('matrixSize').value);
+            config.blockSize = parseInt(document.getElementById('blockSize').value);
+            config.currentBlockRow = 0;
+            config.currentBlockCol = 0;
+            config.currentK = 0;
+            config.isPlaying = false;
+            
+            initMatrices();
+            initSharedMemory();
+            activeBlocks.clear();
+            
+            updateDisplays();
+            draw();
+        }
+
+        // 更新显示
+        function updateDisplays() {
+            document.getElementById('matrixSizeValue').textContent = config.matrixSize + 'x' + config.matrixSize;
+            document.getElementById('speedValue').textContent = config.speed;
+            document.getElementById('currentBlock').textContent = `(${config.currentBlockRow},${config.currentBlockCol})`;
+            document.getElementById('kIteration').textContent = config.currentK;
+            
+            const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+            const computed = config.currentBlockRow * numBlocks + config.currentBlockCol;
+            const total = numBlocks * numBlocks;
+            document.getElementById('computedBlocks').textContent = computed;
+            
+            const completion = Math.min(100, Math.round((computed / total) * 100));
+            document.getElementById('completion').textContent = completion + '%';
+        }
+
+        // 执行一步
+        function stepCompute() {
+            const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+            
+            if (config.currentBlockRow >= numBlocks) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+                return;
+            }
+
+            activeBlocks.clear();
+
+            // 阶段1: 加载到共享内存
+            if (config.currentK === 0) {
+                const blockRowStart = config.currentBlockRow * config.blockSize;
+                const blockColStart = config.currentBlockCol * config.blockSize;
+                
+                // 加载 A 的子块
+                for (let i = 0; i < config.blockSize; i++) {
+                    for (let j = 0; j < config.blockSize; j++) {
+                        const row = blockRowStart + i;
+                        const col = config.currentK * config.blockSize + j;
+                        if (row < config.matrixSize && col < config.matrixSize) {
+                            sharedA[i][j] = matrixA[row][col];
+                        }
+                    }
+                }
+                
+                // 加载 B 的子块
+                for (let i = 0; i < config.blockSize; i++) {
+                    for (let j = 0; j < config.blockSize; j++) {
+                        const row = config.currentK * config.blockSize + i;
+                        const col = blockColStart + j;
+                        if (row < config.matrixSize && col < config.matrixSize) {
+                            sharedB[i][j] = matrixB[row][col];
+                        }
+                    }
+                }
+                
+                config.currentK++;
+            } else if (config.currentK < Math.ceil(config.matrixSize / config.blockSize)) {
+                // 阶段2: 计算并累加
+                const blockRowStart = config.currentBlockRow * config.blockSize;
+                const blockColStart = config.currentBlockCol * config.blockSize;
+                
+                // 计算 C 的子块
+                for (let i = 0; i < config.blockSize; i++) {
+                    for (let j = 0; j < config.blockSize; j++) {
+                        const row = blockRowStart + i;
+                        const col = blockColStart + j;
+                        if (row < config.matrixSize && col < config.matrixSize) {
+                            let sum = 0;
+                            for (let k = 0; k < config.blockSize; k++) {
+                                sum += sharedA[i][k] * sharedB[k][j];
+                            }
+                            matrixC[row][col] += sum;
+                        }
+                    }
+                }
+                
+                // 加载下一个 K 块
+                if (config.currentK < Math.ceil(config.matrixSize / config.blockSize)) {
+                    for (let i = 0; i < config.blockSize; i++) {
+                        for (let j = 0; j < config.blockSize; j++) {
+                            const row = blockRowStart + i;
+                            const col = config.currentK * config.blockSize + j;
+                            if (row < config.matrixSize && col < config.matrixSize) {
+                                sharedA[i][j] = matrixA[row][col];
+                            }
+                        }
+                    }
+                    
+                    for (let i = 0; i < config.blockSize; i++) {
+                        for (let j = 0; j < config.blockSize; j++) {
+                            const row = config.currentK * config.blockSize + i;
+                            const col = blockColStart + j;
+                            if (row < config.matrixSize && col < config.matrixSize) {
+                                sharedB[i][j] = matrixB[row][col];
+                            }
+                        }
+                    }
+                    
+                    config.currentK++;
+                } else {
+                    // 完成当前块，移动到下一个块
+                    config.currentK = 0;
+                    config.currentBlockCol++;
+                    if (config.currentBlockCol >= numBlocks) {
+                        config.currentBlockCol = 0;
+                        config.currentBlockRow++;
+                    }
+                    initSharedMemory();
+                }
+            }
+
+            activeBlocks.add(`${config.currentBlockRow},${config.currentBlockCol}`);
+            updateDisplays();
+            draw();
+
+            // 准备下一步
+            if (config.isPlaying) {
+                setTimeout(() => {
+                    stepCompute();
+                }, 1000 / config.speed);
+            }
+        }
+
+        // 绘制矩阵
+        function drawMatrix() {
+            const ctx = matrixCtx;
+            const width = matrixCanvas.width;
+            const height = matrixCanvas.height;
+            const padding = 40;
+            const cellSize = Math.min(
+                (width - 2 * padding) / (config.matrixSize * 3 + 4),
+                (height - 2 * padding - 60) / config.matrixSize
+            );
+            const startX = padding;
+            const startY = padding + 30;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('C = A × B (SGEMM - 分块计算)', width / 2, 25);
+
+            // 绘制矩阵A
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('A:', startX, startY - 10);
+            for (let i = 0; i < config.matrixSize; i++) {
+                for (let j = 0; j < config.matrixSize; j++) {
+                    const x = startX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const blockRow = Math.floor(i / config.blockSize);
+                    const blockCol = Math.floor(j / config.blockSize);
+                    const isCurrentBlock = blockRow === config.currentBlockRow && 
+                                         Math.floor(j / config.blockSize) === Math.floor(config.currentK / config.blockSize);
+
+                    if (isCurrentBlock && config.currentK > 0) {
+                        ctx.fillStyle = '#FF9800';
+                    } else if (blockRow < config.currentBlockRow || 
+                              (blockRow === config.currentBlockRow && blockCol < Math.floor(config.currentK / config.blockSize))) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+                }
+            }
+
+            // 绘制 × 号
+            const multX = startX + config.matrixSize * cellSize + 10;
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('×', multX, startY + config.matrixSize * cellSize / 2);
+
+            // 绘制矩阵B
+            const bStartX = multX + 20;
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('B:', bStartX, startY - 10);
+            for (let i = 0; i < config.matrixSize; i++) {
+                for (let j = 0; j < config.matrixSize; j++) {
+                    const x = bStartX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const blockRow = Math.floor(i / config.blockSize);
+                    const blockCol = Math.floor(j / config.blockSize);
+                    const isCurrentBlock = blockCol === config.currentBlockCol && 
+                                         Math.floor(i / config.blockSize) === Math.floor(config.currentK / config.blockSize);
+
+                    if (isCurrentBlock && config.currentK > 0) {
+                        ctx.fillStyle = '#FF9800';
+                    } else if (blockCol < config.currentBlockCol || 
+                              (blockCol === config.currentBlockCol && blockRow < Math.floor(config.currentK / config.blockSize))) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+                }
+            }
+
+            // 绘制 = 号
+            const eqX = bStartX + config.matrixSize * cellSize + 10;
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('=', eqX, startY + config.matrixSize * cellSize / 2);
+
+            // 绘制矩阵C
+            const cStartX = eqX + 20;
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('C:', cStartX, startY - 10);
+            for (let i = 0; i < config.matrixSize; i++) {
+                for (let j = 0; j < config.matrixSize; j++) {
+                    const x = cStartX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const blockRow = Math.floor(i / config.blockSize);
+                    const blockCol = Math.floor(j / config.blockSize);
+                    const isCurrentBlock = blockRow === config.currentBlockRow && blockCol === config.currentBlockCol;
+
+                    if (isCurrentBlock) {
+                        ctx.fillStyle = '#4CAF50';
+                    } else if (blockRow < config.currentBlockRow || 
+                              (blockRow === config.currentBlockRow && blockCol < config.currentBlockCol)) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+
+                    if (matrixC[i][j] > 0) {
+                        ctx.fillStyle = '#000';
+                        ctx.font = '7px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(Math.round(matrixC[i][j]).toString(), x + cellSize / 2, y + cellSize / 2 + 2);
+                    }
+                }
+            }
+
+            // 绘制块边界
+            ctx.strokeStyle = '#FF5722';
+            ctx.lineWidth = 2;
+            const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+            for (let i = 0; i <= numBlocks; i++) {
+                const pos = i * config.blockSize * cellSize;
+                // C 矩阵的块边界
+                ctx.beginPath();
+                ctx.moveTo(cStartX + pos, startY);
+                ctx.lineTo(cStartX + pos, startY + config.matrixSize * cellSize);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(cStartX, startY + pos);
+                ctx.lineTo(cStartX + config.matrixSize * cellSize, startY + pos);
+                ctx.stroke();
+            }
+        }
+
+        // 绘制共享内存
+        function drawSharedMemory() {
+            const ctx = sharedCtx;
+            const width = sharedMemoryCanvas.width;
+            const height = sharedMemoryCanvas.height;
+            const padding = 40;
+            const cellSize = Math.min(
+                (width - 2 * padding) / (config.blockSize * 2 + 2),
+                (height - 2 * padding - 60) / config.blockSize
+            );
+            const startX = padding;
+            const startY = padding + 30;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('共享内存 (Shared Memory)', width / 2, 25);
+
+            // 绘制共享内存 A
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('共享内存 A:', startX, startY - 10);
+            for (let i = 0; i < config.blockSize; i++) {
+                for (let j = 0; j < config.blockSize; j++) {
+                    const x = startX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const val = sharedA[i][j];
+
+                    if (val > 0) {
+                        ctx.fillStyle = '#4CAF50';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+
+                    if (val > 0) {
+                        ctx.fillStyle = '#000';
+                        ctx.font = '8px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(val.toFixed(0), x + cellSize / 2, y + cellSize / 2 + 2);
+                    }
+                }
+            }
+
+            // 绘制共享内存 B
+            const bStartX = startX + config.blockSize * cellSize + 20;
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('共享内存 B:', bStartX, startY - 10);
+            for (let i = 0; i < config.blockSize; i++) {
+                for (let j = 0; j < config.blockSize; j++) {
+                    const x = bStartX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const val = sharedB[i][j];
+
+                    if (val > 0) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+
+                    if (val > 0) {
+                        ctx.fillStyle = '#000';
+                        ctx.font = '8px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(val.toFixed(0), x + cellSize / 2, y + cellSize / 2 + 2);
+                    }
+                }
+            }
+
+            // 绘制说明
+            ctx.fillStyle = '#666';
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+            if (config.currentBlockRow < numBlocks) {
+                ctx.fillText(
+                    `当前块: (${config.currentBlockRow},${config.currentBlockCol}), K迭代: ${config.currentK}/${numBlocks}`,
+                    width / 2,
+                    startY + config.blockSize * cellSize + 20
+                );
+            }
+        }
+
+        // 绘制所有内容
+        function draw() {
+            drawMatrix();
+            drawSharedMemory();
+        }
+
+        // 事件监听
+        document.getElementById('matrixSize').addEventListener('input', (e) => {
+            config.matrixSize = parseInt(e.target.value);
+            document.getElementById('matrixSizeValue').textContent = config.matrixSize + 'x' + config.matrixSize;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('blockSize').addEventListener('change', (e) => {
+            config.blockSize = parseInt(e.target.value);
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('speed').addEventListener('input', (e) => {
+            config.speed = parseInt(e.target.value);
+            document.getElementById('speedValue').textContent = config.speed;
+        });
+
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (config.isPlaying) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            } else {
+                const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+                if (config.currentBlockRow >= numBlocks) {
+                    init();
+                }
+                config.isPlaying = true;
+                document.getElementById('playBtn').textContent = '⏸️ 暂停';
+                stepCompute();
+            }
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            init();
+        });
+
+        document.getElementById('stepBtn').addEventListener('click', () => {
+            const numBlocks = Math.ceil(config.matrixSize / config.blockSize);
+            if (config.currentBlockRow >= numBlocks) {
+                init();
+                return;
+            }
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            stepCompute();
+        });
+
+        // 响应式调整 Canvas 大小
+        function resizeCanvases() {
+            const container = document.querySelector('.visualization-container');
+            const panels = container.querySelectorAll('.viz-panel');
+            panels.forEach(panel => {
+                const canvas = panel.querySelector('canvas');
+                if (canvas) {
+                    const rect = panel.getBoundingClientRect();
+                    canvas.width = rect.width - 40;
+                    canvas.height = Math.min(500, (rect.width - 40) * 0.8);
+                    draw();
+                }
+            });
+        }
+
+        window.addEventListener('resize', resizeCanvases);
+
+        // 初始化
+        init();
+        resizeCanvases();
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA 矩阵-向量乘法可视化 - SGEMV</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .control-group input[type="range"] {
+            width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info-panel {
+            background: #e8f4f8;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .info-panel p {
+            line-height: 1.6;
+            color: #555;
+        }
+
+        .visualization-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1200px) {
+            .visualization-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .viz-panel {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .viz-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        canvas {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔢 CUDA 矩阵-向量乘法可视化</h1>
+            <p>SGEMV (Single-precision GEneral Matrix-Vector Multiply) - Warp归约优化</p>
+        </div>
+
+        <div class="content">
+            <div class="info-panel">
+                <h3>📖 算法说明</h3>
+                <p>
+                    SGEMV 计算 y = A × x，其中 A 是 M×N 矩阵，x 是 N 维向量，y 是 M 维向量。
+                    每个 warp（32 个线程）处理矩阵的一行，线程并行计算该行与向量 x 的部分内积，
+                    然后使用 warp 内归约得到最终结果。
+                </p>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>矩阵大小 (M×N):</label>
+                    <input type="range" id="matrixRows" min="4" max="16" step="2" value="8">
+                    <span id="matrixRowsValue">8</span> ×
+                    <input type="range" id="matrixCols" min="8" max="32" step="8" value="16">
+                    <span id="matrixColsValue">16</span>
+                </div>
+                <div class="control-group">
+                    <label>速度:</label>
+                    <input type="range" id="speed" min="1" max="10" value="3">
+                    <span id="speedValue">3</span>
+                </div>
+                <button id="playBtn">▶️ 开始动画</button>
+                <button id="resetBtn">🔄 重置</button>
+                <button id="stepBtn">⏭️ 单步执行</button>
+            </div>
+
+            <div class="visualization-container">
+                <div class="viz-panel">
+                    <h3>📐 矩阵-向量乘法</h3>
+                    <canvas id="matrixCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>当前处理行</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2196F3;"></div>
+                            <span>已计算</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <h3>🧵 Warp归约过程</h3>
+                    <canvas id="warpCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>活跃线程</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在归约</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #9C27B0;"></div>
+                            <span>归约结果</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="label">当前行</div>
+                    <div class="value" id="currentRow">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">部分和</div>
+                    <div class="value" id="partialSum">0.0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Warp归约步骤</div>
+                    <div class="value" id="reduceStep">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">完成度</div>
+                    <div class="value" id="completion">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        let config = {
+            matrixRows: 8,
+            matrixCols: 16,
+            speed: 3,
+            isPlaying: false,
+            currentRow: 0,
+            currentCol: 0,
+            warpReduceStep: 0,
+            animationFrame: null
+        };
+
+        // 状态
+        let matrixA = [];
+        let vectorX = [];
+        let vectorY = [];
+        let partialSums = [];
+        let activeThreads = new Set();
+        let computingThreads = new Set();
+        const WARP_SIZE = 32;
+
+        // Canvas 元素
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const warpCanvas = document.getElementById('warpCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const warpCtx = warpCanvas.getContext('2d');
+
+        // 初始化矩阵和向量
+        function initMatrices() {
+            matrixA = [];
+            vectorX = [];
+            vectorY = [];
+            partialSums = [];
+
+            for (let i = 0; i < config.matrixRows; i++) {
+                matrixA[i] = [];
+                for (let j = 0; j < config.matrixCols; j++) {
+                    matrixA[i][j] = (i * config.matrixCols + j) % 10 + 1;
+                }
+                vectorY[i] = 0;
+                partialSums[i] = new Array(Math.min(WARP_SIZE, config.matrixCols)).fill(0);
+            }
+
+            for (let j = 0; j < config.matrixCols; j++) {
+                vectorX[j] = j + 1;
+            }
+        }
+
+        // 初始化
+        function init() {
+            config.matrixRows = parseInt(document.getElementById('matrixRows').value);
+            config.matrixCols = parseInt(document.getElementById('matrixCols').value);
+            config.currentRow = 0;
+            config.currentCol = 0;
+            config.warpReduceStep = 0;
+            config.isPlaying = false;
+
+            initMatrices();
+            activeThreads.clear();
+            computingThreads.clear();
+
+            updateDisplays();
+            draw();
+        }
+
+        // 更新显示
+        function updateDisplays() {
+            document.getElementById('matrixRowsValue').textContent = config.matrixRows;
+            document.getElementById('matrixColsValue').textContent = config.matrixCols;
+            document.getElementById('speedValue').textContent = config.speed;
+            document.getElementById('currentRow').textContent = config.currentRow;
+            document.getElementById('reduceStep').textContent = config.warpReduceStep;
+
+            if (config.currentRow < config.matrixRows) {
+                const sum = partialSums[config.currentRow] ? 
+                    partialSums[config.currentRow].reduce((a, b) => a + b, 0) : 0;
+                document.getElementById('partialSum').textContent = sum.toFixed(1);
+            }
+
+            const completion = Math.min(100, Math.round((config.currentRow / config.matrixRows) * 100));
+            document.getElementById('completion').textContent = completion + '%';
+        }
+
+        // 执行一步
+        function stepCompute() {
+            if (config.currentRow >= config.matrixRows) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+                return;
+            }
+
+            activeThreads.clear();
+            computingThreads.clear();
+
+            const numThreads = Math.min(WARP_SIZE, config.matrixCols);
+            const numIterations = Math.ceil(config.matrixCols / WARP_SIZE);
+
+            if (config.currentCol < config.matrixCols) {
+                // 阶段1: 并行计算部分和
+                for (let t = 0; t < numThreads; t++) {
+                    activeThreads.add(t);
+                    computingThreads.add(t);
+
+                    const col = config.currentCol + t;
+                    if (col < config.matrixCols) {
+                        const laneId = t;
+                        partialSums[config.currentRow][laneId] += 
+                            matrixA[config.currentRow][col] * vectorX[col];
+                    }
+                }
+                config.currentCol += WARP_SIZE;
+            } else {
+                // 阶段2: Warp归约
+                if (config.warpReduceStep === 0) {
+                    config.warpReduceStep = 1;
+                } else {
+                    let stride = Math.floor(numThreads / Math.pow(2, config.warpReduceStep));
+                    if (stride > 0) {
+                        for (let t = 0; t < stride; t++) {
+                            activeThreads.add(t);
+                            computingThreads.add(t);
+                            partialSums[config.currentRow][t] += partialSums[config.currentRow][t + stride];
+                        }
+                        config.warpReduceStep++;
+                    } else {
+                        // 完成归约，写入结果
+                        vectorY[config.currentRow] = partialSums[config.currentRow][0];
+                        config.currentRow++;
+                        config.currentCol = 0;
+                        config.warpReduceStep = 0;
+                    }
+                }
+            }
+
+            updateDisplays();
+            draw();
+
+            // 准备下一步
+            if (config.isPlaying) {
+                setTimeout(() => {
+                    stepCompute();
+                }, 1000 / config.speed);
+            }
+        }
+
+        // 绘制矩阵-向量乘法
+        function drawMatrix() {
+            const ctx = matrixCtx;
+            const width = matrixCanvas.width;
+            const height = matrixCanvas.height;
+            const padding = 40;
+            const cellSize = Math.min(
+                (width - 2 * padding - 100) / Math.max(config.matrixCols, config.matrixRows),
+                (height - 2 * padding - 80) / (config.matrixRows + 2)
+            );
+            const startX = padding;
+            const startY = padding + 30;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('y = A × x (SGEMV)', width / 2, 25);
+
+            // 绘制矩阵A
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('矩阵 A:', startX, startY - 10);
+            for (let i = 0; i < config.matrixRows; i++) {
+                for (let j = 0; j < config.matrixCols; j++) {
+                    const x = startX + j * cellSize;
+                    const y = startY + i * cellSize;
+
+                    if (i === config.currentRow) {
+                        const laneId = j % WARP_SIZE;
+                        if (j < config.currentCol && activeThreads.has(laneId)) {
+                            ctx.fillStyle = '#FF9800';
+                        } else if (i < config.currentRow || (i === config.currentRow && j < config.currentCol)) {
+                            ctx.fillStyle = '#2196F3';
+                        } else {
+                            ctx.fillStyle = '#4CAF50';
+                        }
+                    } else if (i < config.currentRow) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize - 1, cellSize - 1);
+                }
+            }
+
+            // 绘制 × 号
+            const multX = startX + config.matrixCols * cellSize + 10;
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('×', multX, startY + config.matrixRows * cellSize / 2);
+
+            // 绘制向量x
+            const xStartX = multX + 20;
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('向量 x:', xStartX, startY - 10);
+            for (let j = 0; j < config.matrixCols; j++) {
+                const x = xStartX;
+                const y = startY + j * cellSize;
+                const val = vectorX[j];
+
+                if (j < config.currentCol && config.currentRow < config.matrixRows) {
+                    ctx.fillStyle = '#FF9800';
+                } else {
+                    ctx.fillStyle = '#9C27B0';
+                }
+
+                ctx.fillRect(x, y, cellSize * 2, cellSize - 1);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(x, y, cellSize * 2, cellSize - 1);
+
+                ctx.fillStyle = '#000';
+                ctx.font = '8px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(val.toString(), x + cellSize, y + cellSize / 2 + 2);
+            }
+
+            // 绘制 = 号
+            const eqX = xStartX + cellSize * 2 + 10;
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('=', eqX, startY + config.matrixRows * cellSize / 2);
+
+            // 绘制向量y
+            const yStartX = eqX + 20;
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('向量 y:', yStartX, startY - 10);
+            for (let i = 0; i < config.matrixRows; i++) {
+                const x = yStartX;
+                const y = startY + i * cellSize;
+                const val = vectorY[i];
+
+                if (i === config.currentRow) {
+                    ctx.fillStyle = '#4CAF50';
+                } else if (i < config.currentRow) {
+                    ctx.fillStyle = '#2196F3';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, cellSize * 2, cellSize - 1);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 0.5;
+                ctx.strokeRect(x, y, cellSize * 2, cellSize - 1);
+
+                if (val > 0) {
+                    ctx.fillStyle = '#000';
+                    ctx.font = '8px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(val.toFixed(0), x + cellSize, y + cellSize / 2 + 2);
+                }
+            }
+        }
+
+        // 绘制Warp归约
+        function drawWarp() {
+            const ctx = warpCtx;
+            const width = warpCanvas.width;
+            const height = warpCanvas.height;
+            const padding = 40;
+            const numThreads = Math.min(WARP_SIZE, config.matrixCols);
+            const barWidth = (width - 2 * padding) / numThreads;
+            const maxSum = Math.max(...(partialSums[config.currentRow] || [0]), 1);
+            const barMaxHeight = height - 2 * padding - 100;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Warp归约过程 (行 ${config.currentRow})`, width / 2, 25);
+
+            if (config.currentRow >= config.matrixRows) {
+                ctx.fillStyle = '#4CAF50';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('✓ 计算完成！', width / 2, height / 2);
+                return;
+            }
+
+            // 绘制部分和
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('部分和:', padding, padding + 20);
+
+            for (let t = 0; t < numThreads; t++) {
+                const x = padding + t * barWidth;
+                const value = partialSums[config.currentRow][t] || 0;
+                const barHeight = (value / maxSum) * barMaxHeight;
+                const y = padding + 40 + barMaxHeight - barHeight;
+
+                if (computingThreads.has(t)) {
+                    ctx.fillStyle = '#FF9800';
+                } else if (activeThreads.has(t)) {
+                    ctx.fillStyle = '#4CAF50';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, barWidth - 2, barHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, barWidth - 2, barHeight);
+
+                ctx.fillStyle = '#000';
+                ctx.font = '9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(value.toFixed(1), x + barWidth / 2, y - 5);
+                ctx.fillText(`T${t}`, x + barWidth / 2, padding + 40 + barMaxHeight + 15);
+            }
+
+            // 绘制归约过程说明
+            ctx.fillStyle = '#666';
+            ctx.font = '11px Arial';
+            ctx.textAlign = 'center';
+            if (config.warpReduceStep > 0) {
+                const stride = Math.floor(numThreads / Math.pow(2, config.warpReduceStep));
+                ctx.fillText(
+                    `Warp归约步骤 ${config.warpReduceStep}: stride=${stride}`,
+                    width / 2,
+                    padding + 40 + barMaxHeight + 35
+                );
+            }
+
+            // 绘制最终结果
+            if (vectorY[config.currentRow] > 0) {
+                ctx.fillStyle = '#9C27B0';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    `y[${config.currentRow}] = ${vectorY[config.currentRow].toFixed(1)}`,
+                    width / 2,
+                    height - padding
+                );
+            }
+        }
+
+        // 绘制所有内容
+        function draw() {
+            drawMatrix();
+            drawWarp();
+        }
+
+        // 事件监听
+        document.getElementById('matrixRows').addEventListener('input', (e) => {
+            config.matrixRows = parseInt(e.target.value);
+            document.getElementById('matrixRowsValue').textContent = config.matrixRows;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('matrixCols').addEventListener('input', (e) => {
+            config.matrixCols = parseInt(e.target.value);
+            document.getElementById('matrixColsValue').textContent = config.matrixCols;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('speed').addEventListener('input', (e) => {
+            config.speed = parseInt(e.target.value);
+            document.getElementById('speedValue').textContent = config.speed;
+        });
+
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (config.isPlaying) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            } else {
+                if (config.currentRow >= config.matrixRows) {
+                    init();
+                }
+                config.isPlaying = true;
+                document.getElementById('playBtn').textContent = '⏸️ 暂停';
+                stepCompute();
+            }
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            init();
+        });
+
+        document.getElementById('stepBtn').addEventListener('click', () => {
+            if (config.currentRow >= config.matrixRows) {
+                init();
+                return;
+            }
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            stepCompute();
+        });
+
+        // 响应式调整 Canvas 大小
+        function resizeCanvases() {
+            const container = document.querySelector('.visualization-container');
+            const panels = container.querySelectorAll('.viz-panel');
+            panels.forEach(panel => {
+                const canvas = panel.querySelector('canvas');
+                if (canvas) {
+                    const rect = panel.getBoundingClientRect();
+                    canvas.width = rect.width - 40;
+                    canvas.height = Math.min(500, (rect.width - 40) * 0.8);
+                    draw();
+                }
+            });
+        }
+
+        window.addEventListener('resize', resizeCanvases);
+
+        // 初始化
+        init();
+        resizeCanvases();
+    </script>
+</body>
+</html>
+

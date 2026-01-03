@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA 稀疏矩阵-向量乘法可视化 - SpMV</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .controls {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input, .control-group select {
+            padding: 8px 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .control-group input[type="range"] {
+            width: 200px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .info-panel {
+            background: #e8f4f8;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #667eea;
+        }
+
+        .info-panel h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .info-panel p {
+            line-height: 1.6;
+            color: #555;
+        }
+
+        .visualization-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 1200px) {
+            .visualization-container {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .viz-panel {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .viz-panel h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        canvas {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: #fafafa;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 1px solid #ccc;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+
+        .stat-card .value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        .stat-card .label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔢 CUDA 稀疏矩阵-向量乘法可视化</h1>
+            <p>SpMV (Sparse Matrix-Vector Multiplication) - CSR格式与Warp归约</p>
+        </div>
+
+        <div class="content">
+            <div class="info-panel">
+                <h3>📖 算法说明</h3>
+                <p>
+                    稀疏矩阵-向量乘法 (SpMV) 计算 y = A * x，其中 A 是稀疏矩阵（CSR格式），
+                    x 是密集向量。每个线程组（vector）处理矩阵的一行，线程组内的线程并行处理
+                    该行的非零元素，然后使用 warp 内归约得到最终结果。
+                </p>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>矩阵大小:</label>
+                    <input type="range" id="matrixSize" min="4" max="16" step="1" value="8">
+                    <span id="matrixSizeValue">8x8</span>
+                </div>
+                <div class="control-group">
+                    <label>每行线程数:</label>
+                    <select id="threadsPerVector">
+                        <option value="2">2</option>
+                        <option value="4">4</option>
+                        <option value="8" selected>8</option>
+                        <option value="16">16</option>
+                        <option value="32">32</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label>速度:</label>
+                    <input type="range" id="speed" min="1" max="10" value="3">
+                    <span id="speedValue">3</span>
+                </div>
+                <button id="playBtn">▶️ 开始动画</button>
+                <button id="resetBtn">🔄 重置</button>
+                <button id="stepBtn">⏭️ 单步执行</button>
+            </div>
+
+            <div class="visualization-container">
+                <div class="viz-panel">
+                    <h3>📐 稀疏矩阵 (CSR格式)</h3>
+                    <canvas id="matrixCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>当前处理行</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #2196F3;"></div>
+                            <span>非零元素</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #E0E0E0;"></div>
+                            <span>零元素</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="viz-panel">
+                    <h3>🧵 线程组执行与Warp归约</h3>
+                    <canvas id="threadCanvas" width="600" height="500"></canvas>
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #4CAF50;"></div>
+                            <span>活跃线程</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #FF9800;"></div>
+                            <span>正在计算</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #9C27B0;"></div>
+                            <span>归约结果</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="label">当前行</div>
+                    <div class="value" id="currentRow">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">非零元素数</div>
+                    <div class="value" id="nnzCount">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">部分和</div>
+                    <div class="value" id="partialSum">0.0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">完成度</div>
+                    <div class="value" id="completion">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 配置
+        let config = {
+            matrixSize: 8,
+            threadsPerVector: 8,
+            speed: 3,
+            isPlaying: false,
+            currentRow: 0,
+            currentNnz: 0,
+            animationFrame: null
+        };
+
+        // 状态 - 生成一个稀疏矩阵
+        let matrix = [];
+        let rowOffset = [0];
+        let colIndex = [];
+        let values = [];
+        let vectorX = [];
+        let vectorY = [];
+        let activeThreads = new Set();
+        let computingThreads = new Set();
+        let partialSums = [];
+        let warpReduceStep = 0;
+
+        // Canvas 元素
+        const matrixCanvas = document.getElementById('matrixCanvas');
+        const threadCanvas = document.getElementById('threadCanvas');
+        const matrixCtx = matrixCanvas.getContext('2d');
+        const threadCtx = threadCanvas.getContext('2d');
+
+        // 生成稀疏矩阵
+        function generateSparseMatrix() {
+            matrix = [];
+            rowOffset = [0];
+            colIndex = [];
+            values = [];
+            vectorX = [];
+            vectorY = [];
+            partialSums = [];
+
+            const size = config.matrixSize;
+            const sparsity = 0.3; // 30% 非零元素
+
+            // 生成矩阵
+            for (let i = 0; i < size; i++) {
+                matrix[i] = [];
+                let nnzInRow = 0;
+                for (let j = 0; j < size; j++) {
+                    if (Math.random() < sparsity) {
+                        const val = Math.floor(Math.random() * 10) + 1;
+                        matrix[i][j] = val;
+                        colIndex.push(j);
+                        values.push(val);
+                        nnzInRow++;
+                    } else {
+                        matrix[i][j] = 0;
+                    }
+                }
+                rowOffset.push(rowOffset[rowOffset.length - 1] + nnzInRow);
+            }
+
+            // 生成向量 x
+            for (let i = 0; i < size; i++) {
+                vectorX[i] = i + 1;
+            }
+
+            // 初始化结果向量 y
+            for (let i = 0; i < size; i++) {
+                vectorY[i] = 0;
+            }
+
+            // 初始化部分和
+            for (let i = 0; i < size; i++) {
+                partialSums[i] = new Array(config.threadsPerVector).fill(0);
+            }
+        }
+
+        // 初始化
+        function init() {
+            config.matrixSize = parseInt(document.getElementById('matrixSize').value);
+            config.threadsPerVector = parseInt(document.getElementById('threadsPerVector').value);
+            config.currentRow = 0;
+            config.currentNnz = 0;
+            config.isPlaying = false;
+            warpReduceStep = 0;
+            
+            generateSparseMatrix();
+            activeThreads.clear();
+            computingThreads.clear();
+            
+            updateDisplays();
+            draw();
+        }
+
+        // 更新显示
+        function updateDisplays() {
+            document.getElementById('matrixSizeValue').textContent = config.matrixSize + 'x' + config.matrixSize;
+            document.getElementById('speedValue').textContent = config.speed;
+            document.getElementById('currentRow').textContent = config.currentRow;
+            
+            if (config.currentRow < config.matrixSize) {
+                const rowStart = rowOffset[config.currentRow];
+                const rowEnd = rowOffset[config.currentRow + 1];
+                document.getElementById('nnzCount').textContent = rowEnd - rowStart;
+                
+                const sum = partialSums[config.currentRow] ? 
+                    partialSums[config.currentRow].reduce((a, b) => a + b, 0) : 0;
+                document.getElementById('partialSum').textContent = sum.toFixed(1);
+            }
+            
+            const completion = Math.min(100, Math.round((config.currentRow / config.matrixSize) * 100));
+            document.getElementById('completion').textContent = completion + '%';
+        }
+
+        // 执行一步
+        function stepCompute() {
+            if (config.currentRow >= config.matrixSize) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+                return;
+            }
+
+            const rowStart = rowOffset[config.currentRow];
+            const rowEnd = rowOffset[config.currentRow + 1];
+            const nnzInRow = rowEnd - rowStart;
+
+            // 清除之前的状态
+            activeThreads.clear();
+            computingThreads.clear();
+
+            if (warpReduceStep === 0) {
+                // 阶段1: 并行计算部分和
+                for (let t = 0; t < config.threadsPerVector; t++) {
+                    activeThreads.add(t);
+                    computingThreads.add(t);
+                    
+                    // 每个线程处理间隔为 threadsPerVector 的元素
+                    for (let nnzIdx = rowStart + t; nnzIdx < rowEnd; nnzIdx += config.threadsPerVector) {
+                        const col = colIndex[nnzIdx];
+                        const val = values[nnzIdx];
+                        partialSums[config.currentRow][t] += val * vectorX[col];
+                    }
+                }
+                warpReduceStep = 1;
+            } else {
+                // 阶段2: Warp归约
+                let stride = config.threadsPerVector / 2;
+                let step = Math.floor(Math.log2(config.threadsPerVector));
+                
+                if (warpReduceStep <= step) {
+                    for (let t = 0; t < stride; t++) {
+                        activeThreads.add(t);
+                        computingThreads.add(t);
+                        partialSums[config.currentRow][t] += partialSums[config.currentRow][t + stride];
+                    }
+                    warpReduceStep++;
+                    stride /= 2;
+                } else {
+                    // 完成归约，写入结果
+                    vectorY[config.currentRow] = partialSums[config.currentRow][0];
+                    config.currentRow++;
+                    warpReduceStep = 0;
+                }
+            }
+
+            updateDisplays();
+            draw();
+
+            // 准备下一步
+            if (config.isPlaying) {
+                setTimeout(() => {
+                    stepCompute();
+                }, 1000 / config.speed);
+            }
+        }
+
+        // 绘制矩阵
+        function drawMatrix() {
+            const ctx = matrixCtx;
+            const width = matrixCanvas.width;
+            const height = matrixCanvas.height;
+            const padding = 60;
+            const cellSize = Math.min(
+                (width - 2 * padding) / config.matrixSize,
+                (height - 2 * padding - 60) / config.matrixSize
+            );
+            const startX = padding;
+            const startY = padding + 30;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('稀疏矩阵 A (CSR格式)', width / 2, 25);
+
+            // 绘制矩阵
+            for (let i = 0; i < config.matrixSize; i++) {
+                for (let j = 0; j < config.matrixSize; j++) {
+                    const x = startX + j * cellSize;
+                    const y = startY + i * cellSize;
+                    const val = matrix[i][j];
+
+                    // 确定颜色
+                    if (i === config.currentRow && val !== 0) {
+                        ctx.fillStyle = '#FF9800';
+                    } else if (i === config.currentRow) {
+                        ctx.fillStyle = '#4CAF50';
+                    } else if (val !== 0) {
+                        ctx.fillStyle = '#2196F3';
+                    } else {
+                        ctx.fillStyle = '#E0E0E0';
+                    }
+
+                    ctx.fillRect(x, y, cellSize - 2, cellSize - 2);
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(x, y, cellSize - 2, cellSize - 2);
+
+                    // 绘制值
+                    if (val !== 0) {
+                        ctx.fillStyle = '#000';
+                        ctx.font = '10px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(val.toString(), x + cellSize / 2, y + cellSize / 2 + 3);
+                    }
+                }
+            }
+
+            // 绘制向量 x
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('向量 x:', startX, startY + config.matrixSize * cellSize + 20);
+            for (let i = 0; i < config.matrixSize; i++) {
+                const x = startX + i * cellSize;
+                const y = startY + config.matrixSize * cellSize + 30;
+                ctx.fillStyle = '#9C27B0';
+                ctx.fillRect(x, y, cellSize - 2, 20);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, cellSize - 2, 20);
+                ctx.fillStyle = '#000';
+                ctx.font = '9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(vectorX[i].toString(), x + cellSize / 2, y + 13);
+            }
+
+            // 绘制CSR信息
+            ctx.fillStyle = '#666';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'left';
+            const rowStart = rowOffset[config.currentRow];
+            const rowEnd = rowOffset[config.currentRow + 1];
+            ctx.fillText(
+                `行 ${config.currentRow}: row_offset[${config.currentRow}]=${rowStart}, row_offset[${config.currentRow+1}]=${rowEnd}`,
+                startX,
+                startY + config.matrixSize * cellSize + 55
+            );
+        }
+
+        // 绘制线程执行
+        function drawThreads() {
+            const ctx = threadCtx;
+            const width = threadCanvas.width;
+            const height = threadCanvas.height;
+            const padding = 40;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 绘制标题
+            ctx.fillStyle = '#333';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('线程组执行与Warp归约', width / 2, 25);
+
+            if (config.currentRow >= config.matrixSize) {
+                ctx.fillStyle = '#4CAF50';
+                ctx.font = 'bold 16px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('✓ 计算完成！', width / 2, height / 2);
+                return;
+            }
+
+            const rowStart = rowOffset[config.currentRow];
+            const rowEnd = rowOffset[config.currentRow + 1];
+            const nnzInRow = rowEnd - rowStart;
+
+            // 绘制部分和
+            const barWidth = (width - 2 * padding) / config.threadsPerVector;
+            const maxSum = Math.max(...partialSums[config.currentRow], 1);
+            const barMaxHeight = height - 2 * padding - 100;
+
+            ctx.fillStyle = '#666';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`行 ${config.currentRow} 的部分和:`, padding, padding + 20);
+
+            for (let t = 0; t < config.threadsPerVector; t++) {
+                const x = padding + t * barWidth;
+                const value = partialSums[config.currentRow][t];
+                const barHeight = (value / maxSum) * barMaxHeight;
+                const y = padding + 40 + barMaxHeight - barHeight;
+
+                if (computingThreads.has(t)) {
+                    ctx.fillStyle = '#FF9800';
+                } else if (activeThreads.has(t)) {
+                    ctx.fillStyle = '#4CAF50';
+                } else {
+                    ctx.fillStyle = '#E0E0E0';
+                }
+
+                ctx.fillRect(x, y, barWidth - 2, barHeight);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, barWidth - 2, barHeight);
+
+                ctx.fillStyle = '#000';
+                ctx.font = '9px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(value.toFixed(1), x + barWidth / 2, y - 5);
+                ctx.fillText(`T${t}`, x + barWidth / 2, padding + 40 + barMaxHeight + 15);
+            }
+
+            // 绘制归约过程
+            if (warpReduceStep > 1) {
+                ctx.fillStyle = '#9C27B0';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                const totalSum = partialSums[config.currentRow].reduce((a, b) => a + b, 0);
+                ctx.fillText(
+                    `Warp归约步骤 ${warpReduceStep - 1}`,
+                    width / 2,
+                    padding + 40 + barMaxHeight + 40
+                );
+            }
+
+            // 绘制最终结果
+            if (vectorY[config.currentRow] > 0) {
+                ctx.fillStyle = '#9C27B0';
+                ctx.font = 'bold 14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(
+                    `y[${config.currentRow}] = ${vectorY[config.currentRow].toFixed(1)}`,
+                    width / 2,
+                    height - padding
+                );
+            }
+        }
+
+        // 绘制所有内容
+        function draw() {
+            drawMatrix();
+            drawThreads();
+        }
+
+        // 事件监听
+        document.getElementById('matrixSize').addEventListener('input', (e) => {
+            config.matrixSize = parseInt(e.target.value);
+            document.getElementById('matrixSizeValue').textContent = config.matrixSize + 'x' + config.matrixSize;
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('threadsPerVector').addEventListener('change', (e) => {
+            config.threadsPerVector = parseInt(e.target.value);
+            if (!config.isPlaying) {
+                init();
+            }
+        });
+
+        document.getElementById('speed').addEventListener('input', (e) => {
+            config.speed = parseInt(e.target.value);
+            document.getElementById('speedValue').textContent = config.speed;
+        });
+
+        document.getElementById('playBtn').addEventListener('click', () => {
+            if (config.isPlaying) {
+                config.isPlaying = false;
+                document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            } else {
+                if (config.currentRow >= config.matrixSize) {
+                    init();
+                }
+                config.isPlaying = true;
+                document.getElementById('playBtn').textContent = '⏸️ 暂停';
+                stepCompute();
+            }
+        });
+
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            init();
+        });
+
+        document.getElementById('stepBtn').addEventListener('click', () => {
+            if (config.currentRow >= config.matrixSize) {
+                init();
+                return;
+            }
+            config.isPlaying = false;
+            document.getElementById('playBtn').textContent = '▶️ 开始动画';
+            stepCompute();
+        });
+
+        // 响应式调整 Canvas 大小
+        function resizeCanvases() {
+            const container = document.querySelector('.visualization-container');
+            const panels = container.querySelectorAll('.viz-panel');
+            panels.forEach(panel => {
+                const canvas = panel.querySelector('canvas');
+                if (canvas) {
+                    const rect = panel.getBoundingClientRect();
+                    canvas.width = rect.width - 40;
+                    canvas.height = Math.min(500, (rect.width - 40) * 0.8);
+                    draw();
+                }
+            });
+        }
+
+        window.addEventListener('resize', resizeCanvases);
+
+        // 初始化
+        init();
+        resizeCanvases();
+    </script>
+</body>
+</html>
+

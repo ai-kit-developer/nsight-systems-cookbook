@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA GPU 性能优化算法可视化集合</title>
+    <link rel="stylesheet" href="assets/common.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 0;
+            color: #333;
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 1920px;
+            margin: 0 auto;
+            background: white;
+            min-height: 100vh;
+            box-shadow: 0 0 50px rgba(0,0,0,0.2);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 15px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 1.3em;
+            opacity: 0.95;
+        }
+
+        .tabs-container {
+            background: #f8f9fa;
+            border-bottom: 2px solid #e0e0e0;
+            padding: 0 20px;
+            display: flex;
+            gap: 5px;
+            overflow-x: auto;
+            scrollbar-width: thin;
+        }
+
+        .tabs-container::-webkit-scrollbar {
+            height: 8px;
+        }
+
+        .tabs-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .tabs-container::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        .tab-button {
+            padding: 18px 30px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .tab-button:hover {
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            background: white;
+        }
+
+        .tab-content {
+            display: none;
+            width: 100%;
+            min-height: calc(100vh - 200px);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .tab-content {
+            position: relative;
+        }
+
+        .tab-content iframe {
+            width: 100%;
+            border: none;
+            min-height: calc(100vh - 200px);
+            display: block;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .tab-content.active iframe {
+            opacity: 1;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #667eea;
+            font-size: 18px;
+            z-index: 10;
+            display: none; /* 默认隐藏 */
+        }
+
+        .tab-content:not(.active) .loading {
+            display: none !important;
+        }
+
+        .tab-content.active .loading[style*="display: block"] {
+            display: block !important;
+        }
+
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        .breadcrumb {
+            background: #f8f9fa;
+            padding: 15px 40px;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .breadcrumb a {
+            color: #667eea;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb a:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+
+        .breadcrumb span {
+            margin: 0 8px;
+            color: #999;
+        }
+
+        @media (max-width: 1400px) {
+            .header h1 {
+                font-size: 2.5em;
+            }
+            .header p {
+                font-size: 1.1em;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 30px 20px;
+            }
+            .header h1 {
+                font-size: 2em;
+            }
+            .tab-button {
+                padding: 15px 20px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <h1>🚀 CUDA GPU 性能优化算法可视化集合</h1>
+            <p>交互式可视化演示 - 深入理解 GPU 并行计算优化技术</p>
+        </div>
+
+        <div class="breadcrumb" id="breadcrumb">
+            <a href="index.html">首页</a>
+        </div>
+
+        <div class="tabs-container">
+            <button class="tab-button active" data-tab="reduce">🔬 Reduce 归约</button>
+            <button class="tab-button" data-tab="elementwise">⚡ Elementwise 逐元素操作</button>
+            <button class="tab-button" data-tab="spmv">🔢 SpMV 稀疏矩阵-向量乘法</button>
+            <button class="tab-button" data-tab="spmm">🔢 SpMM 稀疏矩阵-矩阵乘法</button>
+            <button class="tab-button" data-tab="sgemm">🔢 SGEMM 矩阵-矩阵乘法</button>
+            <button class="tab-button" data-tab="sgemv">🔢 SGEMV 矩阵-向量乘法</button>
+        </div>
+
+        <div id="tab-reduce" class="tab-content active">
+            <div class="loading" id="loading-reduce" style="display: block;">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="reduce_index.html" loading="lazy" id="iframe-reduce" style="opacity: 0;"></iframe>
+        </div>
+
+        <div id="tab-elementwise" class="tab-content">
+            <div class="loading" id="loading-elementwise">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="elementwise.html" loading="lazy" id="iframe-elementwise"></iframe>
+        </div>
+
+        <div id="tab-spmv" class="tab-content">
+            <div class="loading" id="loading-spmv">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="spmv.html" loading="lazy" id="iframe-spmv"></iframe>
+        </div>
+
+        <div id="tab-spmm" class="tab-content">
+            <div class="loading" id="loading-spmm">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="spmm.html" loading="lazy" id="iframe-spmm"></iframe>
+        </div>
+
+        <div id="tab-sgemm" class="tab-content">
+            <div class="loading" id="loading-sgemm">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="sgemm.html" loading="lazy" id="iframe-sgemm"></iframe>
+        </div>
+
+        <div id="tab-sgemv" class="tab-content">
+            <div class="loading" id="loading-sgemv">
+                <div class="loading-spinner"></div>
+                <div>加载中</div>
+            </div>
+            <iframe src="sgemv.html" loading="lazy" id="iframe-sgemv"></iframe>
+        </div>
+    </div>
+
+    <script src="assets/common.js"></script>
+    <script>
+        // 路由配置
+        const routes = {
+            'reduce': 'reduce_index.html',
+            'elementwise': 'elementwise.html',
+            'spmv': 'spmv.html',
+            'spmm': 'spmm.html',
+            'sgemm': 'sgemm.html',
+            'sgemv': 'sgemv.html'
+        };
+
+        // 标签页名称映射
+        const tabNames = {
+            'reduce': 'Reduce 归约',
+            'elementwise': 'Elementwise 逐元素操作',
+            'spmv': 'SpMV 稀疏矩阵-向量乘法',
+            'spmm': 'SpMM 稀疏矩阵-矩阵乘法',
+            'sgemm': 'SGEMM 矩阵-矩阵乘法',
+            'sgemv': 'SGEMV 矩阵-向量乘法'
+        };
+
+        // 从URL获取当前标签页
+        function getTabFromURL() {
+            const hash = window.location.hash.slice(1);
+            const params = new URLSearchParams(window.location.search);
+            return hash || params.get('tab') || 'reduce';
+        }
+
+        // 更新URL
+        function updateURL(tabName) {
+            const newURL = `${window.location.pathname}?tab=${tabName}`;
+            window.history.pushState({ tab: tabName }, '', newURL);
+            updateBreadcrumb(tabName);
+        }
+
+        // 更新面包屑导航
+        function updateBreadcrumb(tabName) {
+            const breadcrumb = document.getElementById('breadcrumb');
+            if (tabName && tabNames[tabName]) {
+                breadcrumb.innerHTML = `
+                    <a href="index.html">首页</a>
+                    <span>/</span>
+                    <span>${tabNames[tabName]}</span>
+                `;
+            } else {
+                breadcrumb.innerHTML = '<a href="index.html">首页</a>';
+            }
+        }
+
+        // 切换标签页
+        function switchTab(tabName) {
+            // 移除所有活动状态
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            // 添加当前活动状态
+            const button = document.querySelector(`[data-tab="${tabName}"]`);
+            const targetContent = document.getElementById(`tab-${tabName}`);
+            
+            if (button && targetContent) {
+                button.classList.add('active');
+                targetContent.classList.add('active');
+                
+                // 加载iframe内容
+                const iframe = targetContent.querySelector('iframe');
+                const loading = targetContent.querySelector('.loading');
+                
+                // 检查iframe是否已经加载过
+                let isAlreadyLoaded = false;
+                if (iframe) {
+                    try {
+                        // 检查iframe是否已经有内容
+                        if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+                            isAlreadyLoaded = true;
+                        }
+                    } catch (e) {
+                        // 跨域情况下无法访问，假设已加载（因为src已设置）
+                        if (iframe.src) {
+                            isAlreadyLoaded = true;
+                        }
+                    }
+                }
+                
+                if (iframe && !iframe.src) {
+                    const src = iframe.getAttribute('src');
+                    if (src) {
+                        iframe.src = src;
+                        isAlreadyLoaded = false; // 新加载，需要显示loading
+                    }
+                }
+                
+                // 显示或隐藏加载状态
+                if (loading) {
+                    if (isAlreadyLoaded) {
+                        // 已经加载完成，立即隐藏loading
+                        loading.style.display = 'none';
+                        if (iframe) {
+                            iframe.style.opacity = '1';
+                        }
+                    } else {
+                        // 需要加载，显示loading
+                        loading.style.display = 'block';
+                        if (iframe) {
+                            iframe.style.opacity = '0';
+                        }
+                    }
+                }
+                
+                // 更新URL
+                updateURL(tabName);
+            }
+        }
+
+        // 隐藏加载动画
+        function hideLoading(tabName) {
+            const loading = document.getElementById(`loading-${tabName}`);
+            const iframe = document.getElementById(`iframe-${tabName}`);
+            if (loading) {
+                loading.style.display = 'none';
+            }
+            if (iframe) {
+                iframe.style.opacity = '1';
+            }
+        }
+
+        // iframe加载完成处理
+        function setupIframeLoader(tabName) {
+            const iframe = document.getElementById(`iframe-${tabName}`);
+            const loading = document.getElementById(`loading-${tabName}`);
+            
+            if (iframe && loading) {
+                // 检查iframe是否已经加载完成
+                const checkLoaded = () => {
+                    try {
+                        // 如果iframe已经有内容，说明已经加载完成
+                        if (iframe.contentDocument || iframe.contentWindow) {
+                            hideLoading(tabName);
+                            return true;
+                        }
+                    } catch (e) {
+                        // 跨域情况下会抛出异常，这是正常的
+                    }
+                    return false;
+                };
+
+                // 立即检查一次
+                if (!checkLoaded()) {
+                    // 如果还没加载，监听load事件
+                    iframe.addEventListener('load', () => {
+                        hideLoading(tabName);
+                    }, { once: true });
+                }
+            }
+        }
+
+        // 初始化所有iframe加载器（延迟执行，确保DOM已加载）
+        function initializeIframeLoaders() {
+            Object.keys(routes).forEach(tabName => {
+                setupIframeLoader(tabName);
+            });
+        }
+
+        // DOM加载完成后初始化
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initializeIframeLoaders);
+        } else {
+            initializeIframeLoaders();
+        }
+
+        // 标签页按钮点击事件
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', () => {
+                const tabName = button.getAttribute('data-tab');
+                switchTab(tabName);
+            });
+        });
+
+        // 处理浏览器前进/后退
+        window.addEventListener('popstate', (event) => {
+            const tabName = getTabFromURL();
+            switchTab(tabName);
+        });
+
+        // 处理来自iframe的消息（导航）
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'navigate') {
+                const reduceTab = document.getElementById('tab-reduce');
+                if (reduceTab && reduceTab.classList.contains('active')) {
+                    const iframe = reduceTab.querySelector('iframe');
+                    const loading = reduceTab.querySelector('.loading');
+                    if (iframe) {
+                        if (loading) {
+                            loading.style.display = 'block';
+                        }
+                        iframe.style.opacity = '0';
+                        iframe.src = event.data.url;
+                        
+                        // 确保load事件会触发隐藏loading
+                        iframe.addEventListener('load', () => {
+                            hideLoading('reduce');
+                        }, { once: true });
+                    }
+                }
+            }
+        });
+
+        // 页面加载时初始化
+        window.addEventListener('load', () => {
+            const initialTab = getTabFromURL();
+            
+            // 设置初始标签页的iframe加载监听
+            const initialContent = document.getElementById(`tab-${initialTab}`);
+            if (initialContent) {
+                const iframe = initialContent.querySelector('iframe');
+                const loading = initialContent.querySelector('.loading');
+                
+                if (iframe && loading) {
+                    // 监听iframe加载完成
+                    iframe.addEventListener('load', () => {
+                        hideLoading(initialTab);
+                    }, { once: true });
+                    
+                    // 如果iframe已经有src，检查是否已经加载完成
+                    if (iframe.src) {
+                        // 延迟检查，给iframe一些加载时间
+                        setTimeout(() => {
+                            try {
+                                if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+                                    hideLoading(initialTab);
+                                }
+                            } catch (e) {
+                                // 跨域情况，等待load事件
+                            }
+                        }, 100);
+                    }
+                }
+            }
+            
+            // 执行切换（主要是更新URL和面包屑）
+            switchTab(initialTab);
+        });
+    </script>
+</body>
+</html>
+

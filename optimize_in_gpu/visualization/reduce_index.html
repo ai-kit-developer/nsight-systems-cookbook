@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CUDA Reduce 优化可视化 - 主页面</title>
+    <link rel="stylesheet" href="assets/common.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 0;
+            margin: 0;
+            color: #333;
+        }
+
+        .container {
+            max-width: 100%;
+            margin: 0;
+            background: white;
+            border-radius: 0;
+            box-shadow: none;
+            overflow: hidden;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 15px;
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px 40px;
+        }
+
+        .intro {
+            background: #e8f4f8;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 40px;
+            border-left: 4px solid #667eea;
+        }
+
+        .intro h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+        }
+
+        .intro p {
+            line-height: 1.8;
+            color: #555;
+            margin-bottom: 10px;
+        }
+
+        .versions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 25px;
+            margin-top: 30px;
+        }
+
+        .version-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 25px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .version-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 5px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .version-card::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-radius: 50%;
+            background: rgba(102, 126, 234, 0.1);
+            transform: translate(-50%, -50%);
+            transition: width 0.6s, height 0.6s;
+        }
+
+        .version-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.25);
+            border-color: #667eea;
+        }
+
+        .version-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .version-card:hover::after {
+            width: 300px;
+            height: 300px;
+        }
+
+        .version-card:active {
+            transform: translateY(-3px) scale(1.01);
+        }
+
+        .version-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .version-title {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .version-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+
+        .version-description {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 15px;
+        }
+
+        .version-features {
+            margin-top: 15px;
+        }
+
+        .version-features h4 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 0.95em;
+        }
+
+        .features-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .features-list li {
+            padding: 5px 0;
+            color: #555;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+        }
+
+        .features-list li::before {
+            content: '✓';
+            color: #4CAF50;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+
+        .version-problems {
+            margin-top: 15px;
+            padding: 12px;
+            background: #fff3cd;
+            border-left: 3px solid #ffc107;
+            border-radius: 5px;
+        }
+
+        .version-problems h4 {
+            color: #856404;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+
+        .version-problems ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .version-problems li {
+            color: #856404;
+            font-size: 0.85em;
+            padding: 3px 0;
+            padding-left: 15px;
+            position: relative;
+        }
+
+        .version-problems li::before {
+            content: '⚠';
+            position: absolute;
+            left: 0;
+        }
+
+        .performance-table {
+            margin-top: 40px;
+            overflow-x: auto;
+        }
+
+        .performance-table h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        th, td {
+            padding: 15px;
+            text-align: left;
+        }
+
+        th {
+            font-weight: 600;
+            text-align: center;
+        }
+
+        tbody tr {
+            border-bottom: 1px solid #e0e0e0;
+            transition: background 0.2s;
+        }
+
+        tbody tr:hover {
+            background: #f5f5f5;
+        }
+
+        tbody tr:last-child {
+            border-bottom: none;
+        }
+
+        td {
+            text-align: center;
+            color: #555;
+        }
+
+        .speedup {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            background: #f5f5f5;
+            margin-top: 40px;
+        }
+
+        .breadcrumb {
+            background: #f8f9fa;
+            padding: 15px 40px;
+            border-bottom: 1px solid #e0e0e0;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .breadcrumb a {
+            color: #667eea;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .breadcrumb a:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+
+        .breadcrumb span {
+            margin: 0 8px;
+            color: #999;
+        }
+
+        .version-card {
+            position: relative;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb" id="breadcrumb">
+            <a href="index.html">首页</a>
+            <span>/</span>
+            <span>Reduce 归约</span>
+        </div>
+
+        <div class="header">
+            <h1>🚀 CUDA Reduce 优化可视化</h1>
+            <p>从基础实现到极致优化的完整学习路径</p>
+        </div>
+
+        <div class="content">
+            <div class="intro">
+                <h2>📖 项目介绍</h2>
+                <p>
+                    本项目展示了 CUDA Reduce（归约）算法从基础实现到极致优化的完整过程。
+                    通过 8 个不同版本的实现，逐步解决性能瓶颈，最终达到接近硬件极限的性能。
+                </p>
+                <p>
+                    每个版本都包含详细的可视化演示，帮助理解算法的工作原理和优化技巧。
+                    点击下方的版本卡片即可查看对应的可视化页面。
+                </p>
+            </div>
+
+            <div class="versions-grid">
+                <div class="version-card" onclick="loadVisualization('reduce_v0_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v0</span>
+                        <span class="version-badge">Baseline</span>
+                    </div>
+                    <div class="version-description">
+                        基础版本的归约实现，使用树形归约算法。每个线程块包含 256 个线程，通过共享内存进行局部归约。
+                    </div>
+                    <div class="version-problems">
+                        <h4>已知问题</h4>
+                        <ul>
+                            <li>分支发散：同一 warp 内线程执行不同路径</li>
+                            <li>Bank 冲突：访问模式导致共享内存冲突</li>
+                            <li>线程利用率低：每次迭代只有部分线程参与</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v1_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v1</span>
+                        <span class="version-badge">消除分支发散</span>
+                    </div>
+                    <div class="version-description">
+                        使用连续索引计算代替模运算，消除分支发散问题。所有线程执行相同路径，提高 warp 执行效率。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>消除分支发散：使用 index = 2*stride*thread_idx</li>
+                            <li>前几轮迭代中，整个 warp 要么都执行，要么都不执行</li>
+                        </ul>
+                    </div>
+                    <div class="version-problems">
+                        <h4>仍存在的问题</h4>
+                        <ul>
+                            <li>Bank 冲突：访问模式仍可能导致冲突</li>
+                            <li>线程利用率不高</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v2_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v2</span>
+                        <span class="version-badge">消除 Bank 冲突</span>
+                    </div>
+                    <div class="version-description">
+                        使用反向循环（从 blockDim.x/2 开始），改变访问模式，消除 bank 冲突，提高共享内存访问效率。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>反向循环：从 stride = blockDim.x/2 开始</li>
+                            <li>消除 bank 冲突：相邻线程访问相邻内存位置</li>
+                            <li>提高共享内存带宽利用率</li>
+                        </ul>
+                    </div>
+                    <div class="version-problems">
+                        <h4>仍存在的问题</h4>
+                        <ul>
+                            <li>仍有分支发散：if (thread_idx < stride)</li>
+                            <li>线程利用率：每次迭代后一半线程空闲</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v3_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v3</span>
+                        <span class="version-badge">加载时加法</span>
+                    </div>
+                    <div class="version-description">
+                        每个线程加载两个元素并在加载时立即相加，充分利用所有线程，减少 idle 线程，提高线程利用率。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>加载时加法：减少全局内存访问次数</li>
+                            <li>提高线程利用率：充分利用所有线程</li>
+                            <li>减少线程块数量：每个 block 处理更多数据</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v4_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v4</span>
+                        <span class="version-badge">展开最后一个 Warp</span>
+                    </div>
+                    <div class="version-description">
+                        当只剩下一个 warp 时，使用 warp 内同步代替 __syncthreads()，减少同步开销，提高性能。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>展开最后一个 warp：消除循环开销</li>
+                            <li>减少同步操作：warp 内隐式同步</li>
+                            <li>使用 volatile 防止编译器优化</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v5_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v5</span>
+                        <span class="version-badge">完全展开循环</span>
+                    </div>
+                    <div class="version-description">
+                        完全展开归约循环，使用模板参数在编译时优化代码，消除循环开销和分支预测失败的开销。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>完全展开循环：消除循环开销</li>
+                            <li>条件编译：根据 block_size 生成代码</li>
+                            <li>模板化实现：编译时优化</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v6_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v6</span>
+                        <span class="version-badge">多元素处理</span>
+                    </div>
+                    <div class="version-description">
+                        每个线程处理多个元素，使用 #pragma unroll 展开循环，减少线程块数量，提高 GPU 占用率。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>每个线程处理多个元素</li>
+                            <li>循环展开：使用 #pragma unroll</li>
+                            <li>提高 GPU 占用率</li>
+                            <li>减少全局内存访问延迟影响</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="version-card" onclick="loadVisualization('reduce_v7_visualization.html')">
+                    <div class="version-header">
+                        <span class="version-title">Reduce v7</span>
+                        <span class="version-badge">Shuffle 指令</span>
+                    </div>
+                    <div class="version-description">
+                        使用 Shuffle 指令进行 warp 内归约，避免共享内存访问，利用寄存器直接通信，达到极致性能。
+                    </div>
+                    <div class="version-features">
+                        <h4>优化点</h4>
+                        <ul>
+                            <li>使用 __shfl_down_sync 指令</li>
+                            <li>寄存器间直接通信：延迟更低</li>
+                            <li>减少共享内存使用</li>
+                            <li>两阶段归约：warp 内 + warp 间</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="performance-table">
+                <h2>📊 性能对比表</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>版本</th>
+                            <th>优化技巧</th>
+                            <th>耗时 (ns)</th>
+                            <th>带宽 (GB/s)</th>
+                            <th>加速比</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>v0</strong></td>
+                            <td>Baseline</td>
+                            <td>804,187</td>
+                            <td>159.2</td>
+                            <td class="speedup">1.0x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v1</strong></td>
+                            <td>消除分支发散</td>
+                            <td>506,365</td>
+                            <td>252.8</td>
+                            <td class="speedup">1.59x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v2</strong></td>
+                            <td>消除 Bank 冲突</td>
+                            <td>397,886</td>
+                            <td>321.7</td>
+                            <td class="speedup">1.27x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v3</strong></td>
+                            <td>加载时加法</td>
+                            <td>213,182</td>
+                            <td>600.4</td>
+                            <td class="speedup">1.86x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v4</strong></td>
+                            <td>展开最后一个 Warp</td>
+                            <td>169,215</td>
+                            <td>756.4</td>
+                            <td class="speedup">1.26x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v5</strong></td>
+                            <td>完全展开循环</td>
+                            <td>166,752</td>
+                            <td>767.6</td>
+                            <td class="speedup">1.01x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v6</strong></td>
+                            <td>多元素处理</td>
+                            <td>166,656</td>
+                            <td>768.1</td>
+                            <td class="speedup">1.00x</td>
+                        </tr>
+                        <tr>
+                            <td><strong>v7</strong></td>
+                            <td>Shuffle 指令</td>
+                            <td>166,175</td>
+                            <td>770.3</td>
+                            <td class="speedup">1.00x</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="margin-top: 20px; color: #666; font-size: 0.9em;">
+                    * 性能数据基于 V100 GPU，32MB 数据大小测试
+                </p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>CUDA Reduce 优化可视化系统 | GPU Performance Optimization Cookbook</p>
+        </div>
+    </div>
+
+    <script src="assets/common.js"></script>
+    <script>
+        // 版本映射
+        const versionMap = {
+            'v0': 'reduce_v0_visualization.html',
+            'v1': 'reduce_v1_visualization.html',
+            'v2': 'reduce_v2_visualization.html',
+            'v3': 'reduce_v3_visualization.html',
+            'v4': 'reduce_v4_visualization.html',
+            'v5': 'reduce_v5_visualization.html',
+            'v6': 'reduce_v6_visualization.html',
+            'v7': 'reduce_v7_visualization.html'
+        };
+
+        // 从URL获取版本参数
+        function getVersionFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('version');
+        }
+
+        // 处理版本卡片点击，在 iframe 中加载对应的可视化页面
+        function loadVisualization(url, version = null) {
+            // 如果在 iframe 中，通知父页面切换内容
+            if (window.parent !== window) {
+                window.parent.postMessage({ 
+                    type: 'navigate', 
+                    url: url,
+                    version: version 
+                }, '*');
+            } else {
+                // 如果不在 iframe 中，直接跳转
+                if (version) {
+                    window.location.href = `${url}?version=${version}`;
+                } else {
+                    window.location.href = url;
+                }
+            }
+        }
+
+        // 页面加载时检查URL参数
+        window.addEventListener('load', () => {
+            const version = getVersionFromURL();
+            if (version && versionMap[version]) {
+                // 延迟加载，确保页面渲染完成
+                setTimeout(() => {
+                    loadVisualization(versionMap[version], version);
+                }, 100);
+            }
+        });
+
+        // 更新卡片点击事件，传递版本信息
+        document.querySelectorAll('.version-card').forEach(card => {
+            const originalOnClick = card.getAttribute('onclick');
+            if (originalOnClick) {
+                // 提取版本号
+                const match = originalOnClick.match(/loadVisualization\('([^']+)'\)/);
+                if (match) {
+                    const url = match[1];
+                    const version = Object.keys(versionMap).find(v => versionMap[v] === url);
+                    card.removeAttribute('onclick');
+                    card.addEventListener('click', () => {
+                        loadVisualization(url, version);
+                    });
+                }
+            }
+        });
+    </script>
+</body>
+</html>
